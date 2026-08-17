@@ -921,13 +921,61 @@ is only unloaded files.
 - **→ R3 (architecture):** `src/core/policy.ts` must define the `Policy` / middleware interface,
   and `src/core/clock.ts` the injected `Clock`. Both are **pre-wave contract files**. Unit
   independence (§7.4) and determinism (C3) both depend on them existing before the wave starts.
-- **→ R2 (test framework):** everything C2 requires is [VERIFIED] working in `node:test` today —
-  per-file selection, `--test-name-pattern`, TAP output, coverage. Zero packages. Recommend
-  adopting it; note the two traps in §1.4 and §1.5.
-- **→ R1 (build/packaging):** the TS 6.0.3 pin (§3.1) is the load-bearing constraint. If R1
-  proposes any tool that embeds the TypeScript compiler API, TS 7 is off the table permanently,
-  not just for now. Plain `tsc -p tsconfig.build.json` is [VERIFIED] to produce correct
-  `dist/` + `.d.ts`, including cross-package type resolution (§3.4).
+- **→ R2 (test framework): ACTUAL DIVERGENCE — R2 recommends Vitest, R5 steers to `node:test`.**
+  R2 owns this call; I defer. Consequences if Vitest wins, so the orchestrator can decide with
+  eyes open:
+  - **Only the `test:*` script lines change.** `lint`, `typecheck`, `build`, `check`, the CI
+    workflow and the entire §7 ownership map are unaffected.
+  - Two hazards I documented **disappear** under Vitest: the phantom-pass on a non-matching name
+    filter (§4.1 box / R14), and the coverage blind spot (§1.5 / §8), since Vitest's v8 provider
+    with `coverage.all: true` *does* see never-imported files. If Vitest is chosen, **§8's
+    "do not gate on coverage" argument weakens considerably** — a threshold becomes sound, though
+    I would still leave it non-gating for build 1 on the incentive grounds in §8 (reason 2).
+  - Costs: devDependencies stop being 3 packages, and Vitest brings its own TS pipeline
+    (a second parser whose errors differ from `tsc`'s). It is compatible with the TS 6.0.3 pin.
+- **→ R1 (build/packaging): AGREEMENT, reached independently.** R1's findings file pins
+  `"typescript": "6.0.3"` and lists "TypeScript 7.0.2 as the pinned compiler" in its *rejected*
+  table, citing the same two reasons I did — the `typescript-eslint` peer range `<6.1.0` and the
+  absent stable programmatic API. R1 also independently confirms three of my results: Node 22.22.2
+  runs `.ts` with no flag; relative imports must carry the `.ts` extension (`.js` gives
+  `ERR_MODULE_NOT_FOUND` under strip-types); and the `.ts` specifier surviving into emitted
+  `.d.ts` is safe (R1 checked consumers on TS 5.7–7.0 plus `publint --strict`). Plain
+  `tsc -p tsconfig.build.json` is [VERIFIED] on both sides to produce a correct `dist/` + `.d.ts`.
+  **No conflict to resolve.** One R1 detail to adopt into §3.3 if R1's `isolatedDeclarations` is
+  kept: `declaration: true` must accompany `noEmit: true` or TS raises `TS5069`.
 - **Orchestrator pre-wave checklist:** write all root config, `.github/workflows/ci.yml`,
   `src/core/**`, `test/support/**`; run `npm install` once; commit the lockfile; confirm
   `npm run check` is green on the empty skeleton **before** dispatching six agents into it.
+
+---
+
+## 12. Validation record
+
+The configs in §2.4, §3.3, §4 and §5 are not sketches. A complete skeleton was built from those
+**exact literal contents** — `package.json`, `tsconfig.json`, `tsconfig.build.json`,
+`biome.json`, `.npmrc`, a `src/core/clock.ts` contract, one unit (`src/resilience/retry/`) with
+a co-located test, and a `test/support/fake-clock.ts` importing the contract across the
+`src/` ↔ `test/` boundary.
+
+Installed exactly: `@biomejs/biome 2.5.8`, `@types/node 22.20.1`, `typescript 6.0.3`
+(`tsc --version` → `Version 6.0.3`). Final result:
+
+```
+lint      -> exit=0        build     -> exit=0
+typecheck -> exit=0        clean     -> exit=0
+test:unit -> exit=0        check     -> exit=0     (1.3 s total)
+
+dist/ contains 16 files, 0 of them test artefacts
+test:file -> exit=0 (1 test, pass 1)
+test:tap  -> TAP version 13 / ok 1 - backoff doubles per attempt
+test:cov  -> all files | 100.00 | 100.00 | 100.00
+```
+
+That first run **failed** (`typecheck -> exit=2`, `TS6059`), which is how the `rootDir` bug in
+§3.3 was found and fixed. Copying these contents into the repo should reproduce a green
+`npm run check` on an otherwise empty skeleton.
+
+Two things in this report are **not** independently verified and are stated on documentary
+evidence only: the TypeScript 7.1 API timeline, and the GitHub Actions runner behaviour
+(`actions/checkout@v7` / `setup-node@v7` were confirmed from the canonical READMEs on `main`,
+but no workflow was executed).
