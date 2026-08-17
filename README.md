@@ -60,6 +60,9 @@ interlayer targets
 
 # 4. Capture edges. This is the manual step -- read the runbook first.
 #    docs/02-operator-runbook.md
+#    Then load what you captured. The manual-capture collectors are off in the
+#    shipped config, so enabling them is a deliberate act:
+interlayer collect ~/captures/ --allow-manual-capture
 
 # 5. Adjudicate anything the matcher would not resolve on its own.
 #    "Jane Street Capital LLC" and "Jane Street Entertainment" are not
@@ -87,6 +90,7 @@ interlayer next
 | `init` | Create the state directory and database with private defaults. |
 | `ingest` | Load `Connections.csv` — the set `M` — from the official export. |
 | `targets` | Show the target registry. |
+| `collect` | Load captured mutual connections — the edge set `E` — from HAR files or hand-filled CSVs. Needs `--allow-manual-capture`. |
 | `review` | List ambiguous company matches held out of the graph. |
 | `analyse` | Build, project, cluster and rank. Writes a snapshot. |
 | `report` | Render the snapshot as Markdown, HTML or JSON. |

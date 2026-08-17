@@ -63,6 +63,7 @@ INTEGRATION: dict[str, tuple[str, str]] = {
     "connections": ("interlayer.ingest.connections_csv", "Connections.csv parser"),
     "targets": ("interlayer.ingest.targets", "target registry"),
     "graph": ("interlayer.graph", "graph engine"),
+    "collect": ("interlayer.collect.registry", "acquisition layer"),
 }
 
 
@@ -362,6 +363,124 @@ def ingest(
         typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW)
     if not retain_emails:
         typer.echo("email addresses discarded at parse time (PRIV-06)")
+
+
+@app.command()
+def collect(
+    paths: Annotated[
+        list[Path],
+        typer.Argument(
+            exists=True,
+            readable=True,
+            help="HAR files, hand-filled mutual-connection CSVs, or directories "
+            "containing them. These carry the edges — who in your network is "
+            "connected to whom at the target firms.",
+        ),
+    ],
+    state_root: StateRootOpt = None,
+    allow_manual_capture: Annotated[
+        bool,
+        typer.Option(
+            "--allow-manual-capture",
+            help="Enable the manual-capture collectors for this run. Off by "
+            "default: the shipped configuration permits first-party exports "
+            "only, so turning this on is a deliberate, logged act.",
+        ),
+    ] = False,
+) -> None:
+    """Load captured mutual connections — the edge set E.
+
+    'ingest' gives you who you know. This gives you who they know inside the
+    target firms, which is the part LinkedIn will not export and nobody sells.
+    You produce these files yourself, by the procedure in
+    docs/02-operator-runbook.md.
+    """
+    root = _state_root(state_root)
+    module = _require("collect", "collect")
+    load_all = _symbol(module, "collect", "load_all")
+
+    # The registry takes files. Expand directories here so the documented
+    # "point it at a folder of captures" workflow actually works.
+    inputs: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            inputs.extend(sorted(p for p in path.rglob("*") if p.is_file()))
+        else:
+            inputs.append(path)
+    if not inputs:
+        _abort(
+            "no files found in " + ", ".join(str(p) for p in paths),
+            hint="Point 'collect' at a .har file, a hand-filled CSV, or a "
+            "directory containing them.",
+        )
+
+    with _open_store(root, "collect") as (store, config, _sweep):
+        with _guard("collect", "interlayer.core.config"):
+            # A property, not a method — calling it yields 'frozenset' object is
+            # not callable, which is a traceback the user should never see.
+            postures = frozenset(config.enabled_postures)
+            if allow_manual_capture:
+                posture_enum = _import("interlayer.core.models").CompliancePosture
+                postures = postures | {posture_enum.MANUAL_CAPTURE}
+
+        with _guard("collect", "interlayer.collect.registry"):
+            result = load_all(inputs, allowed_postures=postures)
+
+        with _guard("collect", "interlayer.core.store"):
+            store.add_members(result.members)
+            store.add_targets(result.targets)
+            store.add_edges(result.edges)
+            counts = _counts(store)
+
+    typer.echo(
+        f"read {len(result.members)} people, {len(result.targets)} targets, "
+        f"{len(result.edges)} edges from {len(inputs)} file(s)"
+    )
+    if counts:
+        typer.echo("store: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+
+    truncated = getattr(result, "truncated_target_ids", ())
+    if truncated:
+        typer.secho(
+            f"{len(truncated)} target(s) had a capped capture — for those, a missing "
+            "edge is not evidence of no edge",
+            fg=typer.colors.YELLOW,
+        )
+
+    # A configuration that permits no collector produces exactly the output of a
+    # user with no network. Those two must never look the same, so this is the
+    # loudest thing the command can say.
+    blocked = False
+    errored = False
+    for diagnostic in getattr(result, "diagnostics", ()) or ():
+        code = getattr(getattr(diagnostic, "code", None), "value", "")
+        severity = getattr(getattr(diagnostic, "severity", None), "value", "info")
+        colour = typer.colors.RED if severity in {"error", "fatal"} else typer.colors.YELLOW
+        typer.secho(f"{severity}: {diagnostic.message}", fg=colour, err=True)
+        if getattr(diagnostic, "remedy", None):
+            typer.secho(f"remedy: {diagnostic.remedy}", fg=typer.colors.CYAN, err=True)
+        if severity in {"error", "fatal"}:
+            errored = True
+        if "posture" in str(code):
+            blocked = True
+
+    if blocked:
+        _abort(
+            "no edges were read because no collector is enabled.",
+            hint="Re-run with --allow-manual-capture, or add 'manual_capture' to "
+            "enabled_adapters in your config. Without edges, 'analyse' will "
+            "report zero bridges — which would mean the tool is switched off, "
+            "not that your network is empty.",
+        )
+
+    # Reading nothing while reporting errors is a failure, and exiting 0 would
+    # let a scripted pipeline carry on into an empty analysis.
+    if errored and not result.edges:
+        _abort(
+            "no edges were read from any input.",
+            hint="Check the diagnostics above. A capture file needs the exact "
+            "header row from docs/02-operator-runbook.md.",
+        )
 
 
 def _counts(store: Any) -> dict[str, int]:

@@ -35,6 +35,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
+from interlayer.core.errors import ComplianceError, InterlayerError
 from interlayer.core.models import CompliancePosture, Provenance
 
 #: Bumped when :class:`EnrichedPerson` changes shape. Part of every cache key, so
@@ -94,7 +95,7 @@ class DatePrecision(StrEnum):
     NONE = "none"
 
 
-class ProviderError(RuntimeError):
+class ProviderError(InterlayerError):
     """Base class for unrecoverable adapter errors."""
 
 
@@ -106,8 +107,13 @@ class ProviderConfigError(ProviderError):
     """
 
 
-class ProviderDisabledError(ProviderError):
-    """A provider that is present but not enabled was asked to run."""
+class ProviderDisabledError(ProviderError, ComplianceError):
+    """A provider that is present but not enabled was asked to run.
+
+    Both a provider error and a compliance breach: PRIV-04 makes enabling an
+    adapter an explicit, logged act, so reaching one that ships disabled is not
+    merely a misconfiguration.
+    """
 
 
 @dataclass(frozen=True)

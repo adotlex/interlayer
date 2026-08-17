@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 from interlayer.core import ids
+from interlayer.core.errors import CollectError, ComplianceError
 from interlayer.core.models import (
     CompliancePosture,
     Edge,
@@ -134,7 +135,7 @@ class Diagnostic:
         return "\n".join(parts)
 
 
-class CollectorError(RuntimeError):
+class CollectorError(CollectError):
     """Raised only for conditions the caller cannot recover from.
 
     Malformed *records* never raise — they become diagnostics. This is for
@@ -143,8 +144,12 @@ class CollectorError(RuntimeError):
     """
 
 
-class CompliancePostureError(CollectorError):
-    """A collector or record declared a posture outside the allowlist."""
+class CompliancePostureError(CollectorError, ComplianceError):
+    """A collector or record declared a posture outside the allowlist.
+
+    Deliberately both: the CLI catches it as a collection failure, and the
+    privacy layer catches it as the PRIV-04 breach it is.
+    """
 
 
 # ---------------------------------------------------------------------------

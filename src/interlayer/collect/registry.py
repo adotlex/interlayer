@@ -13,7 +13,7 @@ thing that might be lying.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -164,6 +164,20 @@ def for_path(
     return None
 
 
+def _roster_rank(
+    path: Path, permitted: frozenset[CompliancePosture], kwargs: Mapping[str, object]
+) -> int:
+    """0 for a roster file, 1 for everything else. Sorts rosters to the front."""
+    collector = for_path(path, allowed_postures=permitted, **kwargs)
+    kind_of = getattr(collector, "kind_of", None)
+    if kind_of is None:
+        return 1
+    try:
+        return 0 if kind_of(path) == "targets" else 1
+    except OSError:  # pragma: no cover - unreadable file is diagnosed downstream
+        return 1
+
+
 def load_all(
     paths: Sequence[Path],
     *,
@@ -181,7 +195,50 @@ def load_all(
     results: list[CollectionResult] = []
     diagnostics: list[Diagnostic] = []
 
-    for path in paths:
+    if not for_posture(permitted):
+        # Say this once, loudly. A config that permits no collector produces the
+        # same empty output as a user with no network, and those two must never
+        # be indistinguishable.
+        diagnostics.append(
+            Diagnostic(
+                code=Code.POSTURE_NOT_ALLOWED,
+                message=(
+                    "no collector is enabled: the permitted postures are "
+                    f"{sorted(p.value for p in permitted)}, and every shipped "
+                    "collector declares "
+                    f"{sorted({spec.posture.value for spec in specs()})}. Nothing "
+                    "was read — this is a configuration state, not an empty network."
+                ),
+                severity=Severity.ERROR,
+                remedy=(
+                    "add "
+                    f"{CompliancePosture.MANUAL_CAPTURE.value!r} to enabled_adapters "
+                    "to turn on the HAR and hand-filled CSV collectors"
+                ),
+            )
+        )
+
+    # Roster pre-pass. `targets.csv` names each target's firm; `mutuals.csv`
+    # carries only target ids. Parsed independently, every mutual row lands with
+    # an unknown firm, which silently destroys the per-firm split that the whole
+    # Citadel / Citadel Securities distinction depends on. So read the roster
+    # files first and hand the table to the collectors that need it.
+    ordered = sorted(paths, key=lambda p: (_roster_rank(p, permitted, kwargs), str(p)))
+    if "targets" not in kwargs:
+        roster: dict[str, object] = {}
+        for path in ordered:
+            if _roster_rank(path, permitted, kwargs) != 0:
+                break
+            collector = for_path(path, allowed_postures=permitted, **kwargs)
+            read_targets = getattr(collector, "read_targets", None)
+            if read_targets is None:
+                continue
+            table, _ = read_targets(path)
+            roster.update(table)
+        if roster:
+            kwargs = {**kwargs, "targets": roster}
+
+    for path in ordered:
         collector = for_path(path, allowed_postures=permitted, **kwargs)
         if collector is None:
             diagnostics.append(

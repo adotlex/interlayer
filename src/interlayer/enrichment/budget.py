@@ -16,11 +16,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from interlayer.core.errors import InterlayerError
+
 DEFAULT_MAX_CALLS_PER_RUN = 1000
 DEFAULT_MAX_ESTIMATED_COST_USD = 25.0
 
 
-class BudgetExceeded(RuntimeError):
+class BudgetExceeded(InterlayerError):
     """A call would breach the run's call or cost ceiling. The run stops here."""
 
 

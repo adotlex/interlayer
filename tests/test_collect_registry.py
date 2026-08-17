@@ -140,3 +140,24 @@ def test_registering_an_automated_collector_is_refused() -> None:
 def test_default_allowlist_excludes_third_party_and_automated() -> None:
     assert CompliancePosture.AUTOMATED not in registry.DEFAULT_ALLOWED_POSTURES
     assert CompliancePosture.THIRD_PARTY_API not in registry.DEFAULT_ALLOWED_POSTURES
+
+
+def test_a_config_permitting_nothing_says_so_loudly(tmp_path: Path) -> None:
+    """An over-restrictive config must not look like an empty network."""
+    result = registry.load_all(
+        [_mutuals(tmp_path)],
+        allowed_postures={CompliancePosture.FIRST_PARTY_EXPORT},
+    )
+    assert result.edges == ()
+    blocked = [d for d in result.diagnostics if d.code is DiagnosticCode.POSTURE_NOT_ALLOWED]
+    assert blocked, [d.code for d in result.diagnostics]
+    assert "configuration state, not an empty network" in blocked[0].message
+    assert "manual_capture" in (blocked[0].remedy or "")
+
+
+def test_collect_errors_are_catchable_through_the_core_hierarchy() -> None:
+    from interlayer.core.errors import CollectError, ComplianceError
+
+    assert issubclass(registry.UnknownCollectorError, CollectError)
+    assert issubclass(CompliancePostureError, ComplianceError)
+    assert issubclass(CompliancePostureError, CollectError)
