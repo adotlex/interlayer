@@ -56,6 +56,15 @@ src = ["src", "tests"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# UP042 would rewrite `class Firm(str, Enum)` as StrEnum, which changes __str__
+# from "Firm.CITADEL" to "citadel" and would silently alter every f-string that
+# interpolates one of these enums.
+"src/interlayer/core/models.py" = ["UP042"]
+# RUF001 flags the ambiguous-looking characters that this module exists to fold.
+# They are the data, not a typo.
+"src/interlayer/core/ids.py" = ["RUF001"]
+
 [tool.mypy]
 python_version = "3.11"
 files = ["src"]

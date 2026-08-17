@@ -69,6 +69,31 @@ class Firm(str, Enum):
     CITADEL = "citadel"
     CITADEL_SECURITIES = "citadel_securities"
 
+    @classmethod
+    def from_registry_id(cls, value: str) -> Firm:
+        """Resolve a registry entity id or slug-ish spelling to a canonical Firm.
+
+        The target registry, the store and the CLI each acquired slightly
+        different spellings (``citadel_llc``, ``citadel-securities``,
+        ``jane-street``). Rather than have three private alias tables drift
+        apart, resolution lives here.
+        """
+        key = value.strip().casefold().replace("-", "_")
+        aliases = {
+            "citadel_llc": cls.CITADEL,
+            "citadel_enterprise": cls.CITADEL,
+            "citadel_sec": cls.CITADEL_SECURITIES,
+            "jane_street_capital": cls.JANE_STREET,
+            "jane_street_group": cls.JANE_STREET,
+            "jane_street_global": cls.JANE_STREET,
+        }
+        if key in aliases:
+            return aliases[key]
+        try:
+            return cls(key)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"unknown firm identifier: {value!r}") from exc
+
 
 # ---------------------------------------------------------------------------
 # Records
@@ -241,6 +266,7 @@ class AnalysisResult:
 
 MEMBER_FIELD_ALLOWLIST: frozenset[str] = frozenset(
     {
+        "posture",
         "member_id",
         "first_name",
         "last_name",
@@ -256,6 +282,7 @@ MEMBER_FIELD_ALLOWLIST: frozenset[str] = frozenset(
 
 TARGET_FIELD_ALLOWLIST: frozenset[str] = frozenset(
     {
+        "posture",
         "target_id",
         "firm",
         "first_name",
@@ -271,6 +298,7 @@ TARGET_FIELD_ALLOWLIST: frozenset[str] = frozenset(
 
 EDGE_FIELD_ALLOWLIST: frozenset[str] = frozenset(
     {
+        "posture",
         "member_id",
         "target_id",
         "origin",
@@ -292,21 +320,21 @@ ALL_FIELD_ALLOWLISTS: dict[str, frozenset[str]] = {
 
 __all__ = [
     "ALL_FIELD_ALLOWLISTS",
+    "EDGE_FIELD_ALLOWLIST",
+    "MEMBER_FIELD_ALLOWLIST",
+    "TARGET_FIELD_ALLOWLIST",
     "AnalysisResult",
     "Brokerage",
     "Cluster",
     "CompanyMatch",
     "CompliancePosture",
     "Coverage",
-    "EDGE_FIELD_ALLOWLIST",
     "Edge",
     "EdgeOrigin",
     "Firm",
-    "MEMBER_FIELD_ALLOWLIST",
     "MatchStatus",
     "Member",
     "NextTarget",
     "Provenance",
-    "TARGET_FIELD_ALLOWLIST",
     "Target",
 ]

@@ -133,7 +133,7 @@ def member_id(
     canonical = normalize_slug(slug)
     if canonical:
         return "m_" + sha1_hex("slug:" + canonical)[:16]
-    basis = "name:{}|{}".format(name_key(first_name, last_name), normalize_text(company))
+    basis = f"name:{name_key(first_name, last_name)}|{normalize_text(company)}"
     return "m_" + sha1_hex(basis)[:16]
 
 

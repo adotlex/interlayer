@@ -1,0 +1,378 @@
+# SHIPPED VERBATIM from docs/research/R5-targets-and-privacy.md
+# "Proposed target registry" (doc lines 462-818), with exactly one mechanical change:
+# the entity id `citadel_llc` is renamed `citadel` so it equals `core.models.Firm.CITADEL`,
+# which is frozen for Wave 2. Nothing else — no alias, regex, threshold or vocabulary token —
+# was edited. The `normalisation` block in particular must not be hand-edited: it is the
+# vocabulary the measured 100/100 fixture result depends on.
+#
+# The only other addition is this comment block, reproducing R5's "Resolving the numeric
+# company IDs locally" procedure at the point of use, because `company_id: null` is the one
+# field a user is expected to fill in by hand:
+#
+#   Slugs are stable and authoritative; numeric IDs are the more robust join key but are not
+#   publicly indexed, so every entity below ships `linkedin_company_id: null`. Resolve them
+#   once, locally, while logged in:
+#     1. Open https://www.linkedin.com/company/<slug>/
+#     2. View source and search `urn:li:organization:` — the trailing digits are the ID.
+#     3. Or: run a LinkedIn job search filtered to the company; the URL carries `f_C=<id>`.
+#        (As of Aug 2026 LinkedIn's AI job search retains only f_TPR, f_C, f_AL, f_EA as URL
+#        filters.)
+#     4. Write the integer into this file. A non-null ID enables exact joins on any surface
+#        that emits URNs.
+#   LinkedIn's UI may have changed since 2026-08-17; treat the steps as a starting point.
+#
+# interlayer target registry
+# schema_version is checked at load; bump on any breaking shape change.
+schema_version: 1
+generated: "2026-08-17"
+source: "docs/research/R5-targets-and-privacy.md"
+
+# ---------------------------------------------------------------------------
+# Global normalisation vocabulary. Shared by all entities.
+# ---------------------------------------------------------------------------
+normalisation:
+  # Stripped before matching. Never affects the entity decision.
+  legal_suffixes:
+    - llc
+    - l.l.c
+    - inc
+    - incorporated
+    - ltd
+    - limited
+    - lp
+    - l.p
+    - llp
+    - plc
+    - gmbh
+    - sa
+    - nv
+    - bv
+    - b.v
+    - pte
+    - pty
+    - co
+    - corp
+    - corporation
+    - holding
+    - holdings
+    - company
+    - companies
+    - sarl
+    - ag
+    - oy
+    - oyj
+    - ab
+    - aps
+    - "as"
+    - kk
+    - kft
+    - spa
+    - srl
+    - sl
+    - sas
+    - ulc
+    - the
+    - and
+    - "of"
+    - group
+    - groupe
+
+  # Decoration people add to a Company field that does not change the entity.
+  # Stripped to form the "head"; presence never creates or blocks a match.
+  modifier_tokens:
+    # geography
+    - europe
+    - europa
+    - asia
+    - americas
+    - america
+    - uk
+    - us
+    - usa
+    - emea
+    - apac
+    - global
+    - worldwide
+    - international
+    - intl
+    - ireland
+    - netherlands
+    - holland
+    - singapore
+    - hong
+    - kong
+    - london
+    - amsterdam
+    - york
+    - new
+    - ny
+    - nyc
+    - japan
+    - tokyo
+    - india
+    - australia
+    - sydney
+    - canada
+    - toronto
+    - chicago
+    - miami
+    - shanghai
+    - dublin
+    - paris
+    - zug
+    - zurich
+    - texas
+    - austin
+    - boston
+    - gcs
+    # desk / function decoration
+    - markets
+    - trading
+    - quant
+    - quantitative
+    - research
+    - engineering
+    - tech
+    - desk
+    - team
+    - options
+    - etf
+    - etfs
+    - equities
+    - equity
+    - fixed
+    - income
+    - macro
+    - fx
+    - commodities
+    - crypto
+    - digital
+    - assets
+    - strategies
+    - strategy
+    - institutional
+    - execution
+    - services
+    - platform
+    - systems
+    # employment decoration
+    - internship
+    - intern
+    - contract
+    - contractor
+    - formerly
+    - ex
+    - current
+    - present
+    - remote
+    - hybrid
+    - trader
+    - developer
+    - engineer
+    - analyst
+    - associate
+    - vp
+    - svp
+    - avp
+    - director
+    - manager
+    - head
+    - fulltime
+    - consultant
+    - advisor
+    - via
+    - at
+    - "on"
+    - behalf
+
+# ---------------------------------------------------------------------------
+# Cross-entity match policy.
+# ---------------------------------------------------------------------------
+match_policy:
+  scorer: "rapidfuzz.fuzz.token_sort_ratio"   # NOT token_set_ratio; see Findings §2
+  library: "rapidfuzz>=3.14,<4"
+  # Two entities scoring within this margin => ambiguous => review, never confident.
+  ambiguity_margin: 5
+  # A head token is "unexpected" only if it has no partner in the matched alias's
+  # extension vocabulary at or above this ratio. Forgives typos, punishes foreign tokens.
+  unexpected_token_forgiveness: 85
+  # A typo'd anchor (regex miss, fuzzy hit) can reach review but never confident.
+  fuzzy_anchor_min: 88
+  # Memoise on the raw company string: measured 220x speedup.
+  memoise: true
+
+# ---------------------------------------------------------------------------
+# Target entities.
+# ---------------------------------------------------------------------------
+entities:
+
+  - id: jane_street
+    canonical: "Jane Street"
+    group: jane_street
+    linkedin:
+      slug: "jane-street-global"
+      company_id: null          # resolve locally: view-source -> urn:li:organization:<id>
+      page_display_name: "Jane Street"
+      # Additional REAL pages for the same firm; enumerate but do not treat as separate firms.
+      secondary_slugs:
+        - "jane-street-capital-llc"
+      # Slugs that look like the target but are DIFFERENT COMPANIES. Never enumerate.
+      confusable_slugs:
+        - slug: "janestreetgroup"
+          note: "Unrelated corporate-events business, ~45 followers. Not Jane Street."
+        - slug: "jane-street-entertainment"
+          note: "Unrelated."
+    legal_entities:
+      - "Jane Street Group, LLC"
+      - "Jane Street Capital, LLC"
+      - "Jane Street Execution Services, LLC"
+      - "Jane Street Global Trading, LLC"
+      - "Jane Street Financial Limited"      # UK, FCA FRN 486546
+      - "Jane Street Netherlands B.V."       # AFM
+      - "Jane Street Asia Trading Limited"   # Hong Kong
+      - "JSCC Limited"                       # Cayman, unregulated
+    offices: [New York, London, Hong Kong, Amsterdam, Singapore, Chicago]
+    headcount_estimate: 3317
+    headcount_as_of: "2026-03"
+
+    aliases:
+      - "jane street"
+      - "jane street capital"
+      - "jane street financial"
+      - "jane street netherlands"
+      - "jane street markets"
+      - "jane street execution"
+      - "jane street global"
+      - "jane st"
+    # Matching these yields REVIEW and can never yield CONFIDENT.
+    review_only_aliases:
+      - "js"
+      - "jane"
+    # Self-referential abbreviations dropped when forming the head.
+    noise_tokens: [js, jsg, jsc]
+
+    anchors:
+      - '\bjane\s*st(?:\.|reet|reets)?\b'
+      - '\bjanestreet\b'
+    # ALL of these must be present (exactly, or fuzzily >= fuzzy_anchor_min) for the
+    # typo fallback to fire. Requiring both is what rejects "Jane Iredale".
+    anchor_required: [jane, street]
+
+    negative_patterns:
+      - '\bjane\s*street\s+(entertainment|coffee|bakery|foods?|theat(?:er|re)|records|media|press|books?|gallery|studios?|dental|clinic|church|deli|salon|realty|apartments|residences|properties|hostel|hotel|pharmacy|florist|tavern|pub|physio\w*|yoga|veterinary|nursery|school|academy|barbers?|laundr\w+)\b'
+      - '^\d+[a-z]?\s+jane\s+street\b'     # postal address, e.g. "23 Jane Street"
+      - '\bmary\s+jane\b'
+      - '\bjane\s+doe\b'
+      - '\bcalamity\s+jane\b'
+      - '\bjane\s+iredale\b'              # cosmetics brand
+
+    threshold: 88
+    review_floor: 70
+
+  - id: citadel_securities
+    canonical: "Citadel Securities"
+    group: citadel
+    linkedin:
+      slug: "citadel-securities"
+      company_id: null
+      page_display_name: "Citadel Securities"
+      secondary_slugs: []
+      confusable_slugs: []
+    legal_entities:
+      - "Citadel Securities LLC"
+      - "Citadel Securities Europe Limited"
+      - "Citadel Securities GCS (Ireland) Limited"
+      - "Citadel Securities Canada ULC"
+    offices: [Miami, New York, Chicago, London, Hong Kong, Dublin, Sydney, Tokyo]
+    headcount_estimate: 2311
+    headcount_as_of: "2026-03"
+
+    aliases:
+      - "citadel securities"
+    review_only_aliases: []
+    noise_tokens: [cs, citsec]
+
+    anchors:
+      - '\bcitadel\b'
+      - '\bcitadelsecurities\b'
+    anchor_required: [citadel, securities]
+    # DISCRIMINATOR. Must be present, else this is the hedge fund, not the market maker.
+    # No leading \b: must also fire on the concatenated form "citadelsecurities".
+    requires: 'securit\w*'
+
+    negative_patterns:
+      - '\bcitadel\s+security\s+(software|systems|solutions|services|group)\b'
+      - '\bcitadel\s+(federal\s+)?credit\s+union\b'
+      - '\bmilitary\s+college\b'
+
+    threshold: 88
+    review_floor: 70
+
+  - id: citadel
+    canonical: "Citadel"
+    group: citadel
+    linkedin:
+      slug: "citadel-llc"
+      company_id: null
+      page_display_name: "Citadel"     # NB: displays as "Citadel", not "Citadel LLC"
+      secondary_slugs:
+        - "citadel-global-equities"
+      confusable_slugs:
+        - slug: "citadel-credit-union"
+          note: "Banking. Unrelated."
+        - slug: "the-citadel"
+          note: "Military College of South Carolina. Unrelated."
+        - slug: "citadel-defense-company"
+          note: "Counter-drone defence contractor. Unrelated."
+    legal_entities:
+      - "Citadel LLC"
+      - "Citadel Enterprise Americas LLC"
+      - "Citadel Advisors LLC"
+    business_units:
+      - "Citadel Global Equities"
+      - "Surveyor Capital"
+      - "Ashler Capital"
+      - "Citadel International Equities"
+      - "Strategic Equity Investments"
+      - "Equity Quantitative Research"
+      - "Fixed Income and Macro"
+      - "Global Quantitative Strategies"
+      - "Commodities"
+    funds: [Wellington, Kensington, "Kensington II"]
+    offices: [Miami, New York, Chicago, London, Hong Kong, Greenwich]
+    headcount_estimate: 3153
+    headcount_as_of: "2024"
+
+    aliases:
+      - "citadel"
+      - "citadel enterprise"
+      - "citadel enterprise americas"
+      - "citadel advisors"
+      - "citadel investment"
+      - "citadel kensington"
+      - "citadel wellington"
+      - "citadel gqs"
+      - "surveyor capital"
+      - "ashler capital"
+      - "citadel commodities"
+    review_only_aliases: []
+    noise_tokens: [cit]
+
+    anchors:
+      - '\bcitadel\b'
+      - '\bsurveyor\s+capital\b'
+      - '\bashler\s+capital\b'
+    anchor_required: [citadel]
+    # DISCRIMINATOR. Anything securities-flavoured belongs to citadel_securities.
+    excludes: 'securit\w*'
+
+    negative_patterns:
+      - '\bcitadel\s+(federal\s+)?credit\s+union\b'
+      - '\bthe\s+citadel\b'
+      - '\bmilitary\s+college\b'
+      - '\bcitadelle\b'
+      - '\bcitadel\s+(defen[cs]e|information|servicing|broadcasting|insurance|banking|health|ehs|roofing|solar|salisbury|wealth|steel|realty|real\s+estate|mortgage|packaging|construction|exploration|mining|logistics|staffing|academy|school|college|church|ministries|press|studios?|games?|software|plastics|environmental|completions|energy|infrastructure|nursing|rehab|care|cleaning|federal|credit|bank)\b'
+
+    # Higher than the others: the anchor "citadel" is a common noun, so demand more.
+    threshold: 92
+    review_floor: 72
