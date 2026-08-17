@@ -91,9 +91,12 @@ def _code_string_constants(path: Path) -> list[str]:
             ):
                 docstrings.add(id(body[0].value))
         # A bare string expression statement is an attribute docstring.
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
-            if isinstance(node.value.value, str):
-                docstrings.add(id(node.value))
+        if (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            docstrings.add(id(node.value))
     return [
         node.value
         for node in ast.walk(tree)

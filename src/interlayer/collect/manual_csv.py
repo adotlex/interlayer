@@ -167,7 +167,6 @@ class ManualCsvCollector:
 
         table: dict[str, TargetRef] = {}
         targets: list[Target] = []
-        captures: list[MutualCapture] = []
         results: list[CollectionResult] = []
 
         for line_no, row in rows:
@@ -241,10 +240,9 @@ class ManualCsvCollector:
                 captured_at=observed_at or _now(),
                 notes=f"degree {degree.value}: no shared 1st-degree connections possible",
             )
-            captures.append(capture)
             results.append(records_from_capture(capture))
 
-        # ``captures`` is not repeated here: each pruned capture already travels
+        # Pruned captures are not listed separately here: each already travels
         # inside its own result from ``records_from_capture``.
         base = CollectionResult(
             collector=self.name,

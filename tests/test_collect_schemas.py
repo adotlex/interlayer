@@ -28,7 +28,14 @@ def test_no_linkedin_shape_claims_to_be_verified() -> None:
     must ship ``verified=False``. Only shapes we can actually confirm — the HAR
     container format and our own CSV column specs — may claim otherwise.
     """
-    linkedin_prefixes = ("url.", "param.", "enum.network", "enum.member_distance", "json.", "token.")
+    linkedin_prefixes = (
+        "url.",
+        "param.",
+        "enum.network",
+        "enum.member_distance",
+        "json.",
+        "token.",
+    )
     for entry in schemas.iter_entries():
         if entry.key.startswith("har.") or entry.key.startswith("csv."):
             continue

@@ -100,7 +100,13 @@ def write_har(tmp_path: Path, entries: list[dict[str, Any]], name: str = "sessio
     path = tmp_path / name
     path.write_text(
         json.dumps(
-            {"log": {"version": "1.2", "creator": {"name": "Chrome", "version": "140"}, "entries": entries}}
+            {
+                "log": {
+                    "version": "1.2",
+                    "creator": {"name": "Chrome", "version": "140"},
+                    "entries": entries,
+                }
+            }
         ),
         encoding="utf-8",
     )
@@ -216,7 +222,8 @@ def test_included_array_fallback(tmp_path: Path) -> None:
 
 def test_recursive_fallback_recovers_and_warns(tmp_path: Path) -> None:
     """A renamed wrapper must degrade to shape-matching, loudly."""
-    body = {"data": {"searchDashSomethingRenamed": {"stuff": [entity("alexrivera", "Alex Rivera")]}}}
+    renamed = {"stuff": [entity("alexrivera", "Alex Rivera")]}
+    body = {"data": {"searchDashSomethingRenamed": renamed}}
     result = HarCollector(targets=resolver()).collect(
         write_har(tmp_path, [har_entry(SEARCH_URL, body)])
     )
@@ -295,7 +302,13 @@ def test_unsanitised_har_is_refused_before_parsing(tmp_path: Path) -> None:
     dirty = har_entry(
         SEARCH_URL,
         clusters_body([entity("danawu", "Dana Wu")]),
-        extra={"request": {"method": "GET", "url": SEARCH_URL, "cookies": [{"name": "x", "value": "y"}]}},
+        extra={
+            "request": {
+                "method": "GET",
+                "url": SEARCH_URL,
+                "cookies": [{"name": "x", "value": "y"}],
+            }
+        },
     )
     result = HarCollector(targets=resolver()).collect(write_har(tmp_path, [good, dirty]))
 
@@ -373,7 +386,8 @@ def test_accepts_sniffs_without_parsing(tmp_path: Path) -> None:
 
 
 def test_empty_result_is_recorded_as_observed_empty(tmp_path: Path) -> None:
-    path = write_har(tmp_path, [har_entry(SEARCH_URL, clusters_body([], total=0, start=0, count=10))])
+    body = clusters_body([], total=0, start=0, count=10)
+    path = write_har(tmp_path, [har_entry(SEARCH_URL, body)])
     result = HarCollector(targets=resolver()).collect(path)
     assert result.captures[0].status is CaptureStatus.EMPTY
     assert result.coverage_states()["observed_empty"] == 1
