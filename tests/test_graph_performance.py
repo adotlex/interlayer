@@ -86,9 +86,10 @@ def test_t9_1_projection_and_leiden_at_scale():
 def test_t9_2_full_pipeline_at_ten_thousand_members():
     """Whole pipeline, betweenness excluded, under 60s.
 
-    Betweenness is excluded by keeping the graph above the consensus dense limit
-    is *not* how it is done — instead the projection is large enough that
-    ``igraph.betweenness`` would dominate, so this test measures the rest.
+    Betweenness is excluded deliberately: at 10,000 nodes it is the single
+    dominant cost (R3 measured 47s for igraph exact at 8,000), and R3's guidance
+    is to gate it behind a flag above ~15,000 bridge nodes rather than approximate
+    it. This test measures everything else.
     """
     members, targets, edges, _, _ = _pocket_fixture(10_000, 2_000, 50)
     bg = build_bipartite(members, targets, edges)

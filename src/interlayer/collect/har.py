@@ -628,6 +628,27 @@ def _decode_body(content: Any, where: str) -> tuple[str | None, Diagnostic | Non
         )
 
 
+def _merged_params(url: str) -> dict[str, list[str]]:
+    """Top-level query parameters, plus anything packed into the variables blob.
+
+    The rendered search page carries ``connectionOf`` and ``network`` as ordinary
+    query parameters; the GraphQL endpoint packs the same facets inside one
+    Rest.li-encoded ``variables`` value. Both are read, so a capture from either
+    surface works and neither silently yields nothing.
+    """
+    if not url:
+        return {}
+    merged: dict[str, list[str]] = {
+        name: list(values) for name, values in parse_qs(urlsplit(url).query).items()
+    }
+    for blob in schemas.query_values(merged, "param.variables"):
+        for name, packed in _RESTLI_PAIR_RE.findall(blob):
+            items = [part.strip() for part in packed.split(",") if part.strip()]
+            if items:
+                merged.setdefault(name, []).extend(items)
+    return merged
+
+
 def _connection_of(query: Mapping[str, list[str]]) -> str | None:
     """The opaque id the search was restricted to, or ``None``.
 
