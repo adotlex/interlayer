@@ -264,6 +264,12 @@ Two configs, one gate each:
 
 ### 3.3 `tsconfig.json` — literal contents
 
+> **Do not add `rootDir` here.** [VERIFIED] `rootDir: "src"` in the *base* config makes
+> `npm run typecheck` fail with `error TS6059: File 'test/support/fake-clock.ts' is not under
+> 'rootDir' 'src'`, because this config deliberately includes `test/**`. `rootDir` belongs
+> **only** in `tsconfig.build.json`, which excludes `test/`. This exact mistake was caught by
+> building a project from these literal contents; the config below is the corrected version.
+
 ```json
 {
   "compilerOptions": {
@@ -272,9 +278,6 @@ Two configs, one gate each:
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "types": ["node"],
-
-    "rootDir": "src",
-    "outDir": "dist",
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -305,7 +308,7 @@ Load-bearing options, each verified:
 |---|---|
 | `"types": ["node"]` | Without it, `node:test` does not resolve. §1.3 |
 | `"erasableSyntaxOnly": true` | Without it, an `enum` typechecks but explodes at test runtime. §1.2 |
-| `"rootDir": "src"` | TS 7 **errors** without it (`TS5011`). Harmless on TS 6, so set it now and the config survives a future TS 7 upgrade unchanged. [VERIFIED] |
+| `"rootDir": "src"` — **build config only** | TS 7 **errors** without it when emitting (`TS5011`), so `tsconfig.build.json` sets it. Putting it in the base config breaks `typecheck` with `TS6059` (see box above). [VERIFIED both directions] |
 | `allowImportingTsExtensions` + `rewriteRelativeImportExtensions` | Lets source say `import './retry.ts'` (required by Node ESM + type stripping) while `tsc` emits `'./retry.js'`. This is the hinge that makes "no build step for tests" work. |
 
 **`tsconfig.build.json`:**
@@ -396,6 +399,16 @@ Failure propagation was confirmed too: with an unformatted file present, `lint` 
 
 [VERIFIED] `--test-name-pattern='alpha two'` correctly ran only the matching test out of three.
 [VERIFIED] single-file and glob invocation both work.
+
+> **Trap for Wave 3's repair loop — a non-matching name pattern exits 0.** [VERIFIED]
+> `npm run test:name -- 'zzz-nonexistent'` reports `tests 1 / pass 1 / fail 0` and **exits 0**.
+> The "1 test" is the *file itself*, which Node counts as a passing subtest when no test inside
+> it matches. A typo'd or stale test name therefore reports **green while running nothing**.
+>
+> Mitigation for the repair loop: never trust the exit code of a name-filtered run on its own.
+> Either (a) re-run with `test:tap` and assert the expected test name appears as an `ok`/`not ok`
+> line, or (b) prefer **file-scoped** re-runs (`test:file`), which cannot silently match zero
+> tests, and use the name filter only to narrow *within* a known-failing file.
 
 Available runner flags on this Node, confirmed via `node --test --help`:
 `--test-name-pattern`, `--test-reporter`, `--test-reporter-destination`, `--test-only`,
@@ -898,6 +911,8 @@ is only unloaded files.
 | R11 | Coverage gate added prematurely and blocks a correct build | Medium | §8 — report only; gate on structure (§7.6) not percentage |
 | R12 | Wave 2 adds a doc tool (typedoc/api-extractor) that needs the TS compiler API | Low | Already mitigated by pinning TS 6.0.3 — this is the main reason for that pin |
 | R13 | R2 chooses Vitest, contradicting the `node:test` scripts here | Low | Only the `test:*` lines change; `lint`/`typecheck`/`build`/CI/ownership map are unaffected |
+| R14 | **Wave 3 re-runs a failed test by name, mistypes it, and gets a false green** | **High** | [VERIFIED] a non-matching `--test-name-pattern` exits 0 with a phantom pass. Use file-scoped re-runs, or assert the test name in TAP output. See box in §4.1 |
+| R15 | `rootDir` placed in the base `tsconfig.json`, breaking `typecheck` with `TS6059` | Medium | [VERIFIED] and corrected in §3.3 — `rootDir` lives only in `tsconfig.build.json` |
 
 ---
 
