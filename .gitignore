@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ---------------------------------------------------------------------------
+# Personal data. interlayer processes real LinkedIn exports containing personal
+# data about third parties. Nothing under these paths may ever be committed.
+# ---------------------------------------------------------------------------
+data/private/
+data/vault/
+out/
+*.har
+Connections.csv
+Invitations.csv
+Basic_Profile.csv
+Positions.csv
+linkedin-export*/
+*.interlayer.db
+
+# Secrets
+.env
+.env.*
+!.env.example
