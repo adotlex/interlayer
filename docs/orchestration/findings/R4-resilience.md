@@ -3,8 +3,9 @@
 **Stream:** Wave 1 / R4  **Status:** complete  **Target:** Node 22 (verified on v22.22.2), TypeScript, **zero runtime dependencies**
 
 Every algorithm below is hand-rolled. Every literal implementation in §5 was **executed and validated in this
-environment** — 26 behavioural assertions, all passing (§5.7). One genuine design bug was found and fixed during
-validation (breaker trip condition must be evaluated on *every* recorded outcome, not only on failures — see §3.4).
+environment on Node v22.22.2** — 78 behavioural assertions against the exact published code, all passing (§5.7).
+Two defects were found and fixed by that validation: the breaker's trip condition must be evaluated on *every*
+recorded outcome, not only on failures (§3.4), and token-count assertions need a floating-point tolerance (§4.2).
 
 > **Determinism contract (constraint C3).** Every primitive takes an injected `now()`, an injected
 > `{ setTimeout, clearTimeout }`, and an injected `random()`. No primitive may call the globals directly.
@@ -21,6 +22,43 @@ validation (breaker trip condition must be evaluated on *every* recorded outcome
 | Circuit breaker | **Rolling time-window failure ratio + minimum-throughput guard** | `failureRatio: 0.5`, `minimumThroughput: 10` |
 | Rate limiter | **Token bucket**, monotonic clock, bounded FIFO queue | `capacity: 10`, `refillPerSec: 10` |
 | Nesting | `TotalTimeout → Retry → RateLimit → Breaker → AttemptTimeout` | see §5.6 |
+
+### 0.1 Consolidated defaults — copy this into Wave 2 verbatim
+
+```ts
+export const DEFAULTS = {
+  retry: {
+    maxAttempts: 3,                 // TOTAL invocations incl. the first  => at most 2 retries (§1.2)
+    strategy: 'full' as const,      // exponential + full jitter (§1.1)
+    baseDelayMs: 100,
+    factor: 2,
+    maxDelayMs: 30_000,             // cap applied BEFORE jitter (§1.4)
+    budgetMs: undefined,            // derived from the remaining deadline when one exists
+    retryNonIdempotentOnConnectFailure: true,               // (§1.3)
+  },
+  timeout: {
+    attemptTimeoutMs: 10_000,       // bounds ONE provider call      (matches MS standard handler)
+    totalTimeoutMs: 30_000,         // bounds the whole operation
+  },
+  circuitBreaker: {
+    mode: 'ratio' as const,         // 'ratio' | 'consecutive'       (§3.2)
+    failureRatio: 0.5,              // trips at >= 50%
+    minimumThroughput: 10,          // floor 2; guards against tripping on 1 request (§3.2)
+    windowMs: 30_000,
+    bucketMs: 1_000,                // => 30 buckets; bounds memory  (§3.2)
+    resetMs: 10_000,                // OPEN -> HALF_OPEN cooldown, lazy (§3.1)
+    halfOpenMaxConcurrent: 1,       // one probe at a time           (§3.4)
+    halfOpenSuccessesToClose: 1,
+  },
+  rateLimit: {
+    capacity: 10,                   // max burst; bucket starts FULL (§4.5)
+    refillPerSec: 10,
+    onExhaustion: 'wait' as const,  // 'wait' | 'reject'             (§4.3)
+    maxQueueDepth: 100,             // mandatory bound
+    maxQueueWaitMs: 30_000,         // mandatory bound
+  },
+} as const;
+```
 
 ---
 
@@ -462,6 +500,12 @@ msUntil(n):
 `ceil` is deliberate: rounding down would wake the waiter a fraction of a millisecond early, it would find
 insufficient tokens, and it would re-queue — a busy-wait loop. Round up, always.
 
+**Floating-point caveat for Wave 3.** Fractional accrual accumulates IEEE-754 error. Measured: 1000 successive 1 ms
+advances against a 10 tok/s bucket yields `9.999999999999831`, not `10`. This is *correct* behaviour — the drift is
+~1.7 × 10⁻¹³ and bounded — but **tests must assert token counts with a tolerance (`Math.abs(actual - expected) < 1e-9`),
+never with `===`**. An exact-equality assertion here will produce a flaky-looking failure that is not a real bug.
+The same caveat applies to any test that sums many small `msUntil` values.
+
 ### 4.3 Exhaustion behaviour
 
 | Option | For a client-side limiter |
@@ -864,15 +908,18 @@ orchestrator as the R3/R4 seam.
 
 ### 5.7 Validation performed
 
-Both implementation files were executed under Node v22.22.2 in this environment. **26 behavioural assertions, all
-passing**, covering: timeout fast path, slow-op timeout, pre-aborted signal, caller-abort vs timeout distinction,
-`timeoutMs: 0`, signal forwarding, no-wait-on-fast-resolve, late-rejection absorption; exponential/fixed/full/equal
-jitter values and `maxDelay` capping; token-bucket burst, exhaustion, `msUntil` exactness, 1000-tick fractional
-accrual with zero drift, `capacity: 0`, `refillPerSec: 0`, backwards clock; retry total-attempts semantics,
-`maxAttempts` 0/1/3, aggregate-vs-bare error surfacing, non-retryable short-circuit, abort during backoff, budget
-enforcement; breaker minimum-throughput guard, exact-ratio boundary, `CircuitOpenError` with `openUntil`, `resetMs`
-boundary, half-open concurrency limiting, promotion, re-open, stale-generation discard, window expiry, and
-`isFailure` exclusion.
+The code in §5.1–§5.5 was transcribed verbatim (types stripped) and executed under **Node v22.22.2** in this
+environment. **78 behavioural assertions against the exact published code, all passing:**
+
+| Section | Assertions | Coverage |
+|---|---|---|
+| §5.2 `withTimeout` | 14 | fast path, slow-op `TimeoutError` (with `timeoutMs`/`code`), pre-aborted entry with 0 invocations, mid-flight caller abort distinguished from timeout, `cause` identity preservation, `timeoutMs: 0`, `Infinity` pass-through, inner-signal abort reason, late-rejection absorbed with no unhandled rejection, timer cleared on the fast path, caller signal still usable after settlement, nested inner-wins, sync throw propagation, `AbortSignal.timeout` regression guard |
+| §5.4 `TokenBucket` | 14 | `t=0` burst, exhaustion, `msUntil` exactness (99 ms vs 100 ms boundary), 1000-tick fractional accrual, forward-jump clamping, `capacity: 0`, `refillPerSec: 0`, backwards clock + recovery, fractional `n`, `ceil` rounding (334 not 333) |
+| §5.5 `retry` / `computeDelay` | 23 | exact invocation counts for `maxAttempts` 1/3/4, success on the final attempt, `RangeError` for `0`/`-1`/`1.5`/`NaN`, aggregate with chronological `errors` + `cause`, bare-error passthrough at 1 attempt, predicate short-circuit at attempts 1 and 2, exact delay sequences, cap-before-jitter, full/equal jitter bounds, decorrelated purity and bounds, abort before first attempt (0 invocations), abort mid-sleep with timer cleared, `CancelledError` never retried/wrapped, `budgetMs`, non-`Error` throws |
+| §5.3 `CircuitBreaker` | 27 | min-throughput guard at 9 vs 10, exact-ratio boundary, evaluate-on-success regression (§3.4), `CircuitOpenError` with `openUntil` and 0 invocations, `resetMs − 1` vs `resetMs` boundary, half-open concurrency at max 1/2/3 with 8 racing callers, promotion at 1 and 2 successes, re-open on trial failure with `openedAt` reset, window cleared on close, window expiry, bucket-count bound under 200 calls, `isFailure` exclusion + rethrow, stale-generation discard |
+
+Two defects were found **by** this validation and fixed before publication: the breaker's evaluate-on-failure-only
+bug (§3.4) and the floating-point tolerance requirement (§4.2). Both are now recorded as standing tests (CB-6, RL-6).
 
 ---
 
@@ -984,7 +1031,9 @@ boundary, half-open concurrency limiting, promotion, re-open, stale-generation d
 25. `CircuitOpenError` itself is never recorded as an outcome.
 26. State transitions are driven only by `now()`; advancing the injected clock with no calls does **not** by itself
     move `OPEN → HALF_OPEN` in a way observable before the next call (lazy transition).
-27. `minimumThroughput: 1` ⇒ `RangeError` (floor is 2).
+27. `minimumThroughput: 1` ⇒ `RangeError`. **Note:** the breaker class itself does not validate this — it is a
+    **config-layer** concern (R3's config validation). The test belongs with the policy builder, not the breaker.
+    Confirmed during validation: constructing the breaker directly with `minimumThroughput: 1` does not throw.
 
 ### Rate limiter (RL)
 
@@ -993,7 +1042,8 @@ boundary, half-open concurrency limiting, promotion, re-open, stale-generation d
 3. `refillPerSec: 10`, empty bucket ⇒ `msUntil(1) === 100` exactly.
 4. After advancing the clock by exactly 100 ms ⇒ exactly one token is available; a second is not.
 5. At exactly the boundary (`tokens === n`) the acquisition **succeeds** (`>=`, not `>`).
-6. 1000 successive 1 ms clock advances against a 10 tok/s bucket accrue exactly 10 tokens — **no drift**.
+6. 1000 successive 1 ms clock advances against a 10 tok/s bucket accrue 10 tokens — **no systematic drift**.
+   Assert with a tolerance (`< 1e-9`), **not** `===` — the measured value is `9.999999999999831` (§4.2 caveat).
 7. Tokens never exceed `capacity` however far the clock advances.
 8. `capacity: 0` ⇒ every acquisition refused; in wait mode, `RangeError` at enqueue.
 9. `refillPerSec: 0` ⇒ never refills; `msUntil` returns `Infinity`; wait mode rejects rather than scheduling.
