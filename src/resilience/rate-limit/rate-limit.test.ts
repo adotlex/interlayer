@@ -97,7 +97,8 @@ describe('rate limit policy — contract', () => {
   });
 
   it('applies the R4 §0.1 defaults', () => {
-    const described = introspect(rateLimit());
+    const policy = rateLimit();
+    const described = introspect(policy);
     expect(field(described, 'capacity')).toBe(DEFAULTS.rateLimit.capacity);
     expect(field(described, 'refillPerSec')).toBe(DEFAULTS.rateLimit.refillPerSec);
     expect(field(described, 'onExhaustion')).toBe(DEFAULTS.rateLimit.onExhaustion);
@@ -105,7 +106,7 @@ describe('rate limit policy — contract', () => {
     expect(field(described, 'maxQueueWaitMs')).toBe(DEFAULTS.rateLimit.maxQueueWaitMs);
     expect(field(described, 'cost')).toBe(1);
     expect(field(described, 'key')).toBe('default');
-    expect(field(described, 'tokens')).toBe(10); // starts FULL, before any clock exists
+    expectTokens(policy, 10); // starts FULL, before any clock exists
   });
 
   it('rejects an impossible configuration with RangeError, at construction', () => {

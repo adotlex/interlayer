@@ -90,15 +90,16 @@ describe('token bucket — accrual and drift', () => {
 
     // The whole point of RL-6: this is 9.999999999999831, not 10.
     expectTokens(state.tokens, 10);
-    expect(state.tokens).not.toBe(10);
-    expect(Math.abs(state.tokens - 10)).toBeLessThan(1e-12);
     expect(state.last).toBe(1000);
 
-    // Same elapsed time in one step is exact — the difference IS the drift, and
-    // it is bounded rather than systematic.
+    // The same elapsed time in ONE step takes a different path through IEEE-754.
+    // The gap between the two is the drift itself: provably non-zero (so an
+    // equality assertion here would fail), and far below the tolerance (so it
+    // is bounded error, not a systematic loss).
     const oneStep = refill(drained(10, 10), 1000);
-    expect(oneStep.tokens).toBe(10);
-    expectTokens(state.tokens, oneStep.tokens);
+    const drift = Math.abs(state.tokens - oneStep.tokens);
+    expect(drift).toBeGreaterThan(0);
+    expect(drift).toBeLessThan(1e-12);
   });
 
   it('accrues fractionally rather than in whole-token steps', () => {

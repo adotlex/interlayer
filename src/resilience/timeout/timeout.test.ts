@@ -39,14 +39,42 @@ function recordNext<Ctx>(fallback: Ctx, impl: (ctx: Ctx) => Promise<unknown>): R
   };
 }
 
+interface Probe {
+  /** Resolves once the watched promise settles, whichever way it went. */
+  readonly settled: Promise<Outcome>;
+  /** `undefined` while still pending — lets a test assert "nothing has happened yet". */
+  outcome(): Outcome | undefined;
+}
+
 /** Attaches handlers BEFORE the clock moves, so nothing is ever momentarily unhandled. */
-async function settle(promise: Promise<unknown>, drive: () => Promise<void>): Promise<Outcome> {
+function watch(promise: Promise<unknown>): Probe {
+  let current: Outcome | undefined;
   const settled: Promise<Outcome> = promise.then(
-    (value): Outcome => ({ ok: true, value }),
-    (error: unknown): Outcome => ({ ok: false, error }),
+    (value): Outcome => {
+      current = { ok: true, value };
+      return current;
+    },
+    (error: unknown): Outcome => {
+      current = { ok: false, error };
+      return current;
+    },
   );
+  return { settled, outcome: () => current };
+}
+
+/**
+ * Drives a policy to settlement.
+ *
+ * The `flushMacrotask()` before `drive()` is load-bearing: the wrapper invokes
+ * `next()` from a microtask, so without it a `runtime.advance()` issued in the
+ * same synchronous turn would fire the deadline BEFORE the operation ever
+ * started — an artefact of the virtual clock that real time cannot produce.
+ */
+async function settle(promise: Promise<unknown>, drive: () => Promise<void>): Promise<Outcome> {
+  const probe = watch(promise);
+  await flushMacrotask();
   await drive();
-  return await settled;
+  return await probe.settled;
 }
 
 const noDrive = (): Promise<void> => Promise.resolve();
@@ -55,7 +83,10 @@ async function rejectionOf(
   promise: Promise<unknown>,
   drive: () => Promise<void> = noDrive,
 ): Promise<unknown> {
-  const outcome = await settle(promise, drive);
+  return errorOf(await settle(promise, drive));
+}
+
+function errorOf(outcome: Outcome): unknown {
   if (outcome.ok) throw new Error(`expected a rejection, resolved with ${String(outcome.value)}`);
   return outcome.error;
 }
@@ -225,12 +256,17 @@ describe('timing out', () => {
   it('does not fire one millisecond early', async () => {
     const h = testContext();
     const rec = recordNext(h.attempt, neverSettles);
-    const promise = attemptTimeout({ attemptTimeoutMs: 100 }).execute(h.attempt, rec.next);
-    const outcome = await settle(promise, () => h.runtime.advance(99));
-    // Nothing has settled yet; drive the last millisecond to finish the test cleanly.
+    const probe = watch(attemptTimeout({ attemptTimeoutMs: 100 }).execute(h.attempt, rec.next));
+    await flushMacrotask();
+
+    await h.runtime.advance(99);
+    await flushMacrotask();
+    expect(probe.outcome()).toBeUndefined(); // still pending at 99ms
+    expect(h.runtime.pendingTimers).toBe(1);
+
     await h.runtime.advance(1);
-    expect(await settle(promise, noDrive)).toBe(outcome);
-    expect(asTimeout(outcome.ok ? undefined : outcome.error).timeoutMs).toBe(100);
+    expect(asTimeout(errorOf(await probe.settled)).timeoutMs).toBe(100);
+    expect(h.runtime.pendingTimers).toBe(0);
   });
 
   it('a call-scope timeout is NOT retryable and reports scope "call"', async () => {
@@ -521,7 +557,7 @@ describe('the same-tick race', () => {
         () => h.runtime.advance(100),
       );
       expect(outcome.ok).toBe(false);
-      expect(asTimeout(outcome.ok ? undefined : outcome.error).timeoutMs).toBe(100);
+      expect(asTimeout(errorOf(outcome)).timeoutMs).toBe(100);
       await h.runtime.runAll();
       expect(h.runtime.pendingTimers).toBe(0);
     }
