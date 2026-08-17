@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "interlayer"
+version = "0.1.0"
+description = "Find and cluster the people in your LinkedIn network who bridge into a target firm"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+# Pins are the set R3 empirically installed and validated on Python 3.11.15:
+# 15 resolved packages, all prebuilt wheels, no compiler invoked.
+dependencies = [
+    "networkx==3.6.1",
+    "python-igraph==1.0.0",
+    "leidenalg==0.12.0",
+    "numpy==2.4.6",
+    "scipy==1.17.1",
+    "pandas==3.0.5",
+    "rapidfuzz==3.14.5",
+    "scikit-learn==1.9.0",
+    "typer==0.27.1",
+    "pyyaml==6.0.3",
+    "jinja2==3.1.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.3",
+    "mypy==2.3.1",
+    "types-PyYAML==6.0.12.20260815",
+]
+
+[project.scripts]
+interlayer = "interlayer.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/interlayer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "slow: performance tests, excluded from the default run",
+]
+addopts = "-q --strict-markers"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
