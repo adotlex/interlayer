@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 #: Date these shapes were last reviewed. Stamped into every entry that does not
@@ -49,7 +49,7 @@ STALENESS_WARNING = (
 )
 
 
-class SchemaKind(str, Enum):
+class SchemaKind(StrEnum):
     """What sort of shape an entry describes."""
 
     URL = "url"
@@ -75,7 +75,7 @@ class SchemaKind(str, Enum):
     """An ordered set of CSV column names."""
 
 
-class Confidence(str, Enum):
+class Confidence(StrEnum):
     """How much the source behind an entry is worth."""
 
     HIGH = "high"
@@ -127,7 +127,8 @@ class SchemaEntry:
         Diagnostics quote this so the person reading the error knows exactly
         which line of which file to go and check.
         """
-        shown = ".".join(self.values) if self.kind is SchemaKind.JSON_PATH else "/".join(self.values)
+        joiner = "." if self.kind is SchemaKind.JSON_PATH else "/"
+        shown = joiner.join(self.values)
         state = "verified" if self.verified else "UNVERIFIED"
         return (
             f"schemas.py entry '{self.key}' ({self.kind.value}, {state}, "

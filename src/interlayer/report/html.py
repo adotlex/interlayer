@@ -185,11 +185,11 @@ _TEMPLATE = """<!doctype html>
     </dl>
   </section>
 
-  <div class="banner {{ 'warn' if used_inferred else '' }}">
+  <div class="{{ 'banner warn' if used_inferred else 'banner' }}">
     <strong>Basis of ties.</strong> {{ inference_banner }}
   </div>
 
-  <div class="banner {{ 'alert' if unadjudicated_count else '' }}">
+  <div class="{{ 'banner alert' if unadjudicated_count else 'banner' }}">
     <strong>Review queue.</strong> {{ review_statement }}
   </div>
 
@@ -220,7 +220,7 @@ _TEMPLATE = """<!doctype html>
   <div class="meter" role="img" aria-label="Coverage {{ cov.pct }}">
     <span style="width: {{ cov.pct_width }}%"></span>
   </div>
-  <div class="banner {{ '' if cov.complete else 'warn' }}">{{ cov.caveat }}</div>
+  <div class="{{ 'banner' if cov.complete else 'banner warn' }}">{{ cov.caveat }}</div>
 
   <h2>Bridge ranking</h2>
   {%- if bridges %}
@@ -239,7 +239,7 @@ _TEMPLATE = """<!doctype html>
         <td class="num">{{ b.rank }}</td>
         <td>{{ b.name }}{% if b.inferred %}
             <span class="pill inferred">{{ b.basis }}</span>{% endif %}</td>
-        <td><span class="pill {{ 'inferred' if b.inferred else '' }}">{{ b.basis }}</span></td>
+        <td><span class="{{ 'pill inferred' if b.inferred else 'pill' }}">{{ b.basis }}</span></td>
         <td class="num lower-bound">{{ b.reach }}</td>
         <td class="num">{{ b.rarity }}</td>
         <td class="num">{{ b.betweenness }}</td>
@@ -267,7 +267,7 @@ _TEMPLATE = """<!doctype html>
       <div class="lbl">Bridges</div>
       <div class="chips">
       {%- for m in c.members %}
-        <span class="chip {{ 'inferred' if m.inferred else '' }}">{{ m.name
+        <span class="{{ 'chip inferred' if m.inferred else 'chip' }}">{{ m.name
           }}{% if m.inferred %} &middot; {{ m.basis }}{% endif %}</span>
       {%- else %}
         <span class="empty">none</span>

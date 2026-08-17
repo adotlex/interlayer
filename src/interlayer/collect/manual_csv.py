@@ -3,7 +3,7 @@
 This is the collector that must work when everything else has broken: no HAR, no
 DevTools, no cooperation from the response shape. A person with a text editor and
 a browser can fill in ``mutuals.csv`` by hand and get a correct answer out of the
-tool. Every acquisition mode is capped at the same ~150–250 targets/month by the
+tool. Every acquisition mode is capped at the same ~150-250 targets/month by the
 Commercial Use Limit, so the "slow" manual path costs coverage nothing; it costs
 only the user's wall-clock time, once.
 
@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import csv
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,6 @@ from interlayer.collect.interface import (
     TargetRef,
     merge_results,
     records_from_capture,
-    split_display_name,
     target_from_ref,
 )
 from interlayer.core.models import CompliancePosture, Firm, Provenance, Target
@@ -426,7 +425,7 @@ class _MutualGroup:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _clean(raw: Any) -> str:
@@ -613,8 +612,8 @@ def _parse_timestamp(
             remedy="use e.g. 2026-08-17T10:04:00Z",
         )
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc), None
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC), None
 
 
 def _firm_name(firm: Firm | None) -> str:

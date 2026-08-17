@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 
+from interlayer.core.models import CompliancePosture
 from interlayer.enrichment.interface import (
     EnrichmentResult,
     LawfulBasis,
@@ -20,7 +21,6 @@ from interlayer.enrichment.interface import (
     ProviderCost,
     ToSRisk,
 )
-from interlayer.core.models import CompliancePosture
 
 NAME = "null"
 

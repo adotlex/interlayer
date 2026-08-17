@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from interlayer.enrichment.cache import (
@@ -22,7 +22,7 @@ from interlayer.enrichment.interface import (
     Seniority,
 )
 
-NOW = datetime(2026, 8, 17, 12, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 17, 12, tzinfo=UTC)
 KEY = LookupKey(LookupKeyType.LINKEDIN_PUBLIC_ID, "danawu-7f3a2")
 
 

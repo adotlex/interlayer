@@ -30,7 +30,7 @@ import hashlib
 import json
 import re
 from collections.abc import Iterator, Mapping
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -334,7 +334,10 @@ class HarCollector:
 
             group = groups.get(opaque)
             if group is None:
-                group = _CaptureGroup(opaque_id=opaque, source_url=url if isinstance(url, str) else None)
+                group = _CaptureGroup(
+                    opaque_id=opaque,
+                    source_url=url if isinstance(url, str) else None,
+                )
                 groups[opaque] = group
                 order.append(opaque)
             group.absorb(
@@ -501,7 +504,7 @@ class _CaptureGroup:
             collector=collector.name,
             collector_version=collector.version,
             posture=collector.compliance_posture,
-            captured_at=self.started or datetime.now(timezone.utc),
+            captured_at=self.started or datetime.now(UTC),
             source_url=self.source_url,
             source_artifact=str(path),
             source_artifact_sha256=digest,
@@ -698,8 +701,8 @@ def _started_at(entry: Mapping[str, Any]) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _creator(document: Any) -> str:
@@ -828,7 +831,9 @@ def _people_from_walk(body: Any) -> list[PersonRef]:
     return people
 
 
-def _walk(node: Any, depth: int = 0, budget: list[int] | None = None) -> Iterator[Mapping[str, Any]]:
+def _walk(
+    node: Any, depth: int = 0, budget: list[int] | None = None
+) -> Iterator[Mapping[str, Any]]:
     if budget is None:
         budget = [_MAX_WALK_NODES]
     if depth > _MAX_WALK_DEPTH or budget[0] <= 0:

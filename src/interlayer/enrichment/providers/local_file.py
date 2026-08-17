@@ -14,7 +14,7 @@ from __future__ import annotations
 import csv
 import json
 from collections.abc import Iterator, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -188,7 +188,7 @@ def _read_json(path: Path) -> Iterator[dict[str, Any]]:
 
 
 def _file_mtime(path: Path) -> datetime:
-    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
 
 
 def factory(**kwargs: Any) -> LocalFileEnrichmentProvider:

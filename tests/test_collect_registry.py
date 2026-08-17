@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 
 from interlayer.collect import registry, schemas
+from interlayer.collect.interface import Code as DiagnosticCode
 from interlayer.collect.interface import (
     CompliancePostureError,
     MutualCapture,
     TargetRef,
 )
-from interlayer.collect.interface import Code as DiagnosticCode
 from interlayer.core.models import CompliancePosture, Firm
 
 

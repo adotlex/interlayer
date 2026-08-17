@@ -32,7 +32,7 @@ import hashlib
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 from interlayer.core.models import CompliancePosture, Provenance
@@ -42,7 +42,7 @@ from interlayer.core.models import CompliancePosture, Provenance
 ENRICHMENT_SCHEMA_VERSION = 1
 
 
-class ToSRisk(str, Enum):
+class ToSRisk(StrEnum):
     """Declared compliance posture. Every adapter must declare one."""
 
     NONE = "none"
@@ -58,14 +58,14 @@ class ToSRisk(str, Enum):
     """Requires the user's own credentials — banned, see module docstring."""
 
 
-class LawfulBasis(str, Enum):
+class LawfulBasis(StrEnum):
     FIRST_PARTY = "first_party"
     USER_SUPPLIED = "user_supplied"
     LEGITIMATE_INTEREST = "legitimate_interest"
     UNKNOWN = "unknown"
 
 
-class Seniority(str, Enum):
+class Seniority(StrEnum):
     """Fixed vocabulary. A provider's raw seniority string never passes through."""
 
     INTERN = "intern"
@@ -80,7 +80,7 @@ class Seniority(str, Enum):
     UNKNOWN = "unknown"
 
 
-class DatePrecision(str, Enum):
+class DatePrecision(StrEnum):
     """How precise a normalised date actually is.
 
     An overlap computed from year-only dates is far weaker evidence than one
@@ -167,7 +167,7 @@ class ProviderCost:
     notes: str = ""
 
 
-class LookupKeyType(str, Enum):
+class LookupKeyType(StrEnum):
     LINKEDIN_URL = "linkedin_url"
     LINKEDIN_PUBLIC_ID = "linkedin_public_id"
     NAME_AND_EMPLOYER = "name_and_employer"
@@ -191,7 +191,8 @@ def cache_id_for(
     key_type: LookupKeyType, value: str, employer_hint: str | None = None
 ) -> str:
     """``sha256(key_type|value|employer_hint)``, casefolded and stripped."""
-    basis = f"{key_type.value}|{value.casefold().strip()}|{(employer_hint or '').casefold().strip()}"
+    hint = (employer_hint or "").casefold().strip()
+    basis = f"{key_type.value}|{value.casefold().strip()}|{hint}"
     return hashlib.sha256(basis.encode("utf-8")).hexdigest()
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 from interlayer.collect import schemas
 from interlayer.enrichment.interface import DatePrecision, Seniority
@@ -22,7 +22,7 @@ from interlayer.enrichment.normalize import (
 from interlayer.enrichment.providers.brightdata import FIELD_MAP as BRIGHTDATA_MAP
 from interlayer.enrichment.providers.coresignal import FIELD_MAP as CORESIGNAL_MAP
 
-NOW = datetime(2026, 8, 17, 12, tzinfo=timezone.utc)
+NOW = datetime(2026, 8, 17, 12, tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------

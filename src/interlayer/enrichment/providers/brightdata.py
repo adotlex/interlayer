@@ -26,7 +26,7 @@ the registry introspect every adapter's capabilities in an offline test.
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from interlayer.core.models import CompliancePosture
@@ -184,7 +184,7 @@ class BrightDataEnrichmentProvider:
                 payload = self._fetch(url)
             except ProviderConfigError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - a miss must never kill a run
+            except Exception as exc:
                 yield EnrichmentResult(key=key, person=None, error=str(exc))
                 continue
             if payload is None:
@@ -195,7 +195,7 @@ class BrightDataEnrichmentProvider:
                 person=normalize_person(
                     payload,
                     provider=self.name,
-                    retrieved_at=datetime.now(timezone.utc),
+                    retrieved_at=datetime.now(UTC),
                     field_map=FIELD_MAP,
                     allow_contact_fields=self.allow_contact_fields,
                     source_url=url,
@@ -250,7 +250,7 @@ class BrightDataEnrichmentProvider:
     def _request(self, method: str, url: str, body: Any | None = None) -> Any:
         if self._transport is not None:
             return self._transport(method, url, body, self._headers())
-        from interlayer.enrichment.providers import http_json  # noqa: PLC0415
+        from interlayer.enrichment.providers import http_json
 
         return http_json(method, url, body, self._headers())
 

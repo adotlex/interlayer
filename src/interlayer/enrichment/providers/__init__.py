@@ -31,7 +31,7 @@ def http_json(
     payload = None if body is None else json.dumps(body).encode("utf-8")
 
     try:
-        import httpx  # noqa: PLC0415 - deliberate lazy import
+        import httpx
     except ModuleNotFoundError:
         pass
     else:
@@ -41,10 +41,10 @@ def http_json(
         response.raise_for_status()
         return response.json()
 
-    import urllib.request  # noqa: PLC0415 - deliberate lazy import
+    import urllib.request
 
     request = urllib.request.Request(url, data=payload, method=method)
     for name, value in headers.items():
         request.add_header(name, value)
-    with urllib.request.urlopen(request, timeout=60.0) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=60.0) as response:
         return json.loads(response.read().decode("utf-8"))

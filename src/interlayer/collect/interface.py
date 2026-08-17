@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -46,7 +46,7 @@ COLLECTOR_SCHEMA_VERSION = "1.0.0"
 # ---------------------------------------------------------------------------
 
 
-class Severity(str, Enum):
+class Severity(StrEnum):
     """How badly a diagnostic should be taken."""
 
     INFO = "info"
@@ -56,7 +56,7 @@ class Severity(str, Enum):
     """The input was refused outright; no records were produced from it."""
 
 
-class Code(str, Enum):
+class Code(StrEnum):
     """Catalogue of every diagnostic this package can emit.
 
     Kept in one enum so the CLI can render them, tests can assert on them, and
@@ -152,7 +152,7 @@ class CompliancePostureError(CollectorError):
 # ---------------------------------------------------------------------------
 
 
-class Degree(str, Enum):
+class Degree(StrEnum):
     """Shortest-path degree between the user and a target."""
 
     FIRST = "1"
@@ -169,7 +169,7 @@ class Degree(str, Enum):
         return self in (Degree.FIRST, Degree.SECOND, Degree.UNKNOWN)
 
 
-class CaptureStatus(str, Enum):
+class CaptureStatus(StrEnum):
     """What happened when a target's mutual list was looked at."""
 
     COMPLETE = "complete"
@@ -253,7 +253,7 @@ class MutualCapture:
     collector: str = ""
     collector_version: str = COLLECTOR_SCHEMA_VERSION
     posture: CompliancePosture = CompliancePosture.MANUAL_CAPTURE
-    captured_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    captured_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     source_url: str | None = None
     source_artifact: str | None = None
     source_artifact_sha256: str | None = None

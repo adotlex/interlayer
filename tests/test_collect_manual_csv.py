@@ -12,18 +12,101 @@ from interlayer.core.models import CompliancePosture, EdgeOrigin, Firm
 TARGETS_HEADER = ",".join(schemas.values("csv.targets_columns"))
 MUTUALS_HEADER = ",".join(schemas.values("csv.mutuals_columns"))
 
-TARGETS = f"""{TARGETS_HEADER}
-jsmith-quant-9a1,Jordan Smith,https://www.linkedin.com/in/jsmith-quant-9a1/,jane_street,2,2026-08-17T09:12:00Z,people_search:jane_street:london,false,
-p-okafor-2c8,Priya Okafor,https://www.linkedin.com/in/p-okafor-2c8/,citadel_securities,3,2026-08-17T09:14:00Z,people_search:citadel_securities:nyc,true,pruned - 3rd degree
-kchen-dev-4b2,Kim Chen,https://www.linkedin.com/in/kchen-dev-4b2/,citadel,2,2026-08-17T09:15:00Z,,false,
-"""
 
-MUTUALS = f"""{MUTUALS_HEADER}
-jsmith-quant-9a1,Alex Rivera,https://www.linkedin.com/in/alexrivera/,Software Engineer at Acme,complete,3,2026-08-17T10:04:00Z,https://www.linkedin.com/in/jsmith-quant-9a1/,manual,
-jsmith-quant-9a1,Dana Wu,https://www.linkedin.com/in/danawu-7f3a2/,Quant Researcher at Globex,complete,3,2026-08-17T10:04:00Z,,manual,
-jsmith-quant-9a1,Sam Okonkwo,,Trader,complete,3,2026-08-17T10:04:00Z,,manual,no profile url captured
-kchen-dev-4b2,,,,empty,0,2026-08-17T10:07:00Z,https://www.linkedin.com/in/kchen-dev-4b2/,manual,profile shows no mutuals
-"""
+def csv_text(header: str, *rows: tuple[str, ...]) -> str:
+    """Assemble a fixture from fields, so column order comes from the table."""
+    return "\n".join([header, *(",".join(row) for row in rows)]) + "\n"
+
+
+# The two rosters below are R4's worked examples, field for field.
+TARGETS = csv_text(
+    TARGETS_HEADER,
+    (
+        "jsmith-quant-9a1",
+        "Jordan Smith",
+        "https://www.linkedin.com/in/jsmith-quant-9a1/",
+        "jane_street",
+        "2",
+        "2026-08-17T09:12:00Z",
+        "people_search:jane_street:london",
+        "false",
+        "",
+    ),
+    (
+        "p-okafor-2c8",
+        "Priya Okafor",
+        "https://www.linkedin.com/in/p-okafor-2c8/",
+        "citadel_securities",
+        "3",
+        "2026-08-17T09:14:00Z",
+        "people_search:citadel_securities:nyc",
+        "true",
+        "pruned - 3rd degree",
+    ),
+    (
+        "kchen-dev-4b2",
+        "Kim Chen",
+        "https://www.linkedin.com/in/kchen-dev-4b2/",
+        "citadel",
+        "2",
+        "2026-08-17T09:15:00Z",
+        "",
+        "false",
+        "",
+    ),
+)
+
+MUTUALS = csv_text(
+    MUTUALS_HEADER,
+    (
+        "jsmith-quant-9a1",
+        "Alex Rivera",
+        "https://www.linkedin.com/in/alexrivera/",
+        "Software Engineer at Acme",
+        "complete",
+        "3",
+        "2026-08-17T10:04:00Z",
+        "https://www.linkedin.com/in/jsmith-quant-9a1/",
+        "manual",
+        "",
+    ),
+    (
+        "jsmith-quant-9a1",
+        "Dana Wu",
+        "https://www.linkedin.com/in/danawu-7f3a2/",
+        "Quant Researcher at Globex",
+        "complete",
+        "3",
+        "2026-08-17T10:04:00Z",
+        "",
+        "manual",
+        "",
+    ),
+    (
+        "jsmith-quant-9a1",
+        "Sam Okonkwo",
+        "",
+        "Trader",
+        "complete",
+        "3",
+        "2026-08-17T10:04:00Z",
+        "",
+        "manual",
+        "no profile url captured",
+    ),
+    (
+        "kchen-dev-4b2",
+        "",
+        "",
+        "",
+        "empty",
+        "0",
+        "2026-08-17T10:07:00Z",
+        "https://www.linkedin.com/in/kchen-dev-4b2/",
+        "manual",
+        "profile shows no mutuals",
+    ),
+)
 
 
 def _write(tmp_path: Path, name: str, body: str) -> Path:
@@ -108,9 +191,21 @@ def test_observed_empty_is_not_the_same_as_never_looked(tmp_path: Path) -> None:
 
 
 def test_reported_count_above_observed_forces_truncation(tmp_path: Path) -> None:
-    body = f"""{MUTUALS_HEADER}
-r-almeida-8x1,Alex Rivera,https://www.linkedin.com/in/alexrivera/,SWE,complete,24,2026-08-17T10:11:00Z,,manual,stopped after page 1
-"""
+    body = csv_text(
+        MUTUALS_HEADER,
+        (
+            "r-almeida-8x1",
+            "Alex Rivera",
+            "https://www.linkedin.com/in/alexrivera/",
+            "SWE",
+            "complete",
+            "24",
+            "2026-08-17T10:11:00Z",
+            "",
+            "manual",
+            "stopped after page 1 of 3",
+        ),
+    )
     result = ManualCsvCollector(default_firm=Firm.JANE_STREET).read_mutuals(
         _write(tmp_path, "mutuals.csv", body)
     )
@@ -179,7 +274,8 @@ def test_missing_file_is_reported_not_raised(tmp_path: Path) -> None:
 
 
 def test_bom_and_extra_columns_are_tolerated(tmp_path: Path) -> None:
-    body = f"﻿{MUTUALS_HEADER},extra\nt-1,Alex Rivera,,,complete,,2026-08-17T10:00:00Z,,manual,,junk\n"
+    row = ("t-1", "Alex Rivera", "", "", "complete", "", "2026-08-17T10:00:00Z", "", "manual", "")
+    body = "﻿" + csv_text(f"{MUTUALS_HEADER},extra", (*row, "junk"))
     result = ManualCsvCollector(default_firm=Firm.JANE_STREET).read_mutuals(
         _write(tmp_path, "mutuals.csv", body)
     )

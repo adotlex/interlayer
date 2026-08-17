@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -55,7 +55,7 @@ def test_cache_id_separates_key_types_and_employer_hints() -> None:
 
 
 def test_provenance_converts_to_the_frozen_contract() -> None:
-    now = datetime(2026, 8, 17, 10, tzinfo=timezone.utc)
+    now = datetime(2026, 8, 17, 10, tzinfo=UTC)
     provenance = EnrichmentProvenance(provider="local_file", retrieved_at=now)
     core = provenance.to_core(posture=CompliancePosture.FIRST_PARTY_EXPORT)
     assert core.source == "local_file"
