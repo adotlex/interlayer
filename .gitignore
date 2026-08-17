@@ -1,7 +1,29 @@
+# dependencies
 node_modules/
+
+# build output
 dist/
-coverage/
 *.tsbuildinfo
-.DS_Store
-*.log
+
+# test / coverage output
+coverage/
+.nyc_output/
+.vitest/
 .test-results.json
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors & OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# env
+.env
+.env.*
+!.env.example

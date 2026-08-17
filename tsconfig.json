@@ -1,0 +1,42 @@
+{
+  "compilerOptions": {
+    // ── Environment ──────────────────────────────────────────────
+    "target": "es2024",
+    "lib": ["es2024"],
+    "types": ["node"],
+    "moduleDetection": "force",
+
+    // ── Modules ──────────────────────────────────────────────────
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "erasableSyntaxOnly": true,
+    "isolatedDeclarations": true,
+
+    // ── Strictness ───────────────────────────────────────────────
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedSideEffectImports": true,
+    "useUnknownInCatchVariables": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // ── Emit ─────────────────────────────────────────────────────
+    // `declaration` must be on even with `noEmit`, or `isolatedDeclarations`
+    // raises TS5069. NOTE: no `rootDir` here — this config includes `test/**`
+    // and `rootDir: "src"` would fail with TS6059 (R5 §3.3).
+    "declaration": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+}

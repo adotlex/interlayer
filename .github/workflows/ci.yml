@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.22.2'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint & format
+        timeout-minutes: 2
+        run: npm run lint
+
+      - name: Typecheck
+        timeout-minutes: 3
+        run: npm run typecheck
+
+      - name: Unit tests
+        timeout-minutes: 5
+        run: npm test
+
+      - name: Build
+        timeout-minutes: 3
+        run: npm run build
+
+      - name: Coverage (report only, non-gating)
+        timeout-minutes: 5
+        run: npm run test:cov
