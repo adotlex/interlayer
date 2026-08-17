@@ -1,8 +1,8 @@
 import { getEventListeners } from 'node:events';
 import { describe, expect, it } from 'vitest';
+import { testContext } from '../../../test/support/index.ts';
 import { CancelledError, hasCode, TimeoutError } from '../../core/errors.ts';
 import type { AttemptContext, CallContext, Next } from '../../core/types.ts';
-import { testContext } from '../../../test/support/index.ts';
 import { attemptTimeout, totalTimeout } from './timeout.ts';
 
 /* ------------------------------------------------------------------ *
@@ -174,10 +174,11 @@ describe('the fast path', () => {
   it('resolves with the operation value (TO-1)', async () => {
     const h = testContext();
     const rec = recordNext(h.attempt, () => Promise.resolve('answer'));
-    await expect(attemptTimeout({ attemptTimeoutMs: 5_000 }).execute(h.attempt, rec.next)).resolves.toBe(
-      'answer',
-    );
+    await expect(
+      attemptTimeout({ attemptTimeoutMs: 5_000 }).execute(h.attempt, rec.next),
+    ).resolves.toBe('answer');
     expect(rec.seen).toHaveLength(1);
+    expect(h.runtime.pendingTimers).toBe(0);
   });
 
   it('clears the timer without the clock ever moving (TO-13)', async () => {
@@ -193,7 +194,7 @@ describe('the fast path', () => {
     expect(h.runtime.now()).toBe(0); // settled without advancing the clock
   });
 
-  it('narrows the signal via next(ctx\') without mutating the incoming context', async () => {
+  it("narrows the signal via next(ctx') without mutating the incoming context", async () => {
     const h = testContext();
     const originalSignal = h.attempt.signal;
     const rec = recordNext(h.attempt, () => Promise.resolve('ok'));
@@ -215,12 +216,15 @@ describe('the fast path', () => {
     expect(received.provider).toBe(h.attempt.provider);
     expect(received.runtime).toBe(h.attempt.runtime);
     expect(received.callId).toBe(h.attempt.callId);
+    expect(h.runtime.pendingTimers).toBe(0);
   });
 
   it('works the same on the call stack', async () => {
     const h = testContext();
     const rec = recordNext(h.call, () => Promise.resolve(42));
-    await expect(totalTimeout({ totalTimeoutMs: 1_000 }).execute(h.call, rec.next)).resolves.toBe(42);
+    await expect(totalTimeout({ totalTimeoutMs: 1_000 }).execute(h.call, rec.next)).resolves.toBe(
+      42,
+    );
     expect(only(rec.seen).deadlineAt).toBe(1_000);
     expect(h.runtime.pendingTimers).toBe(0);
   });
@@ -283,7 +287,7 @@ describe('timing out', () => {
     expect(h.runtime.pendingTimers).toBe(0);
   });
 
-  it('aborts the operation\'s own signal with the very TimeoutError it will surface (TO-9)', async () => {
+  it("aborts the operation's own signal with the very TimeoutError it will surface (TO-9)", async () => {
     const h = testContext();
     let observed: { aborted: boolean; reason: unknown } | undefined;
     const rec = recordNext(h.attempt, (ctx) => {
@@ -424,6 +428,7 @@ describe('caller-abort is not timeout-abort', () => {
     );
     asTimeout(error);
     expect(h.call.signal.aborted).toBe(false); // the caller's signal is left alone
+    expect(h.runtime.pendingTimers).toBe(0);
   });
 });
 
@@ -508,8 +513,9 @@ describe('edge cases', () => {
     expect(getEventListeners(h.call.signal, 'abort').length).toBe(before);
 
     const failRec = recordNext(h.attempt, neverSettles);
-    await rejectionOf(attemptTimeout({ attemptTimeoutMs: 10 }).execute(h.attempt, failRec.next), () =>
-      h.runtime.advance(10),
+    await rejectionOf(
+      attemptTimeout({ attemptTimeoutMs: 10 }).execute(h.attempt, failRec.next),
+      () => h.runtime.advance(10),
     );
     expect(getEventListeners(h.call.signal, 'abort').length).toBe(before);
     expect(h.runtime.pendingTimers).toBe(0);
@@ -581,19 +587,25 @@ describe('the same-tick race', () => {
         () => h.runtime.advance(100),
       );
       expect(outcome.ok).toBe(false);
-      expect(asTimeout(outcome.ok ? undefined : outcome.error).timeoutMs).toBe(100);
+      expect(asTimeout(errorOf(outcome)).timeoutMs).toBe(100);
       expect(h.runtime.pendingTimers).toBe(0);
     }
   });
 
-  it('resolves when the operation settles even one millisecond earlier', async () => {
+  it('resolves when the operation settles a millisecond earlier', async () => {
     const h = testContext();
     const rec = recordNext(h.attempt, () => h.runtime.sleep(99).then(() => 'operation'));
-    const outcome = await settle(
-      attemptTimeout({ attemptTimeoutMs: 100 }).execute(h.attempt, rec.next),
-      () => h.runtime.advance(100),
-    );
-    expect(outcome).toEqual({ ok: true, value: 'operation' });
+    const probe = watch(attemptTimeout({ attemptTimeoutMs: 100 }).execute(h.attempt, rec.next));
+    await flushMacrotask();
+
+    // Two separate turns, because two timers a millisecond apart really are two
+    // event-loop turns: the value has fully landed before the deadline is due.
+    await h.runtime.advance(99);
+    await flushMacrotask();
+    expect(probe.outcome()).toEqual({ ok: true, value: 'operation' });
+
+    await h.runtime.advance(1); // the deadline is now a no-op on a settled promise
+    expect(await probe.settled).toEqual({ ok: true, value: 'operation' });
     expect(h.runtime.pendingTimers).toBe(0);
   });
 });
@@ -606,11 +618,14 @@ describe('deadline composition', () => {
   it('clamps the attempt budget to an inherited call deadline', async () => {
     const h = testContext({ deadlineAt: 300 });
     const rec = recordNext(h.attempt, neverSettles);
-    const promise = attemptTimeout({ attemptTimeoutMs: 10_000 }).execute(h.attempt, rec.next);
+    const probe = watch(attemptTimeout({ attemptTimeoutMs: 10_000 }).execute(h.attempt, rec.next));
+    await flushMacrotask();
 
-    const outcome = await settle(promise, () => h.runtime.advance(299));
-    expect(outcome).toBeUndefined; // still pending; asserted properly below
-    const error = await rejectionOf(promise, () => h.runtime.advance(1));
+    await h.runtime.advance(299);
+    await flushMacrotask();
+    expect(probe.outcome()).toBeUndefined(); // 10s would not have fired here
+    await h.runtime.advance(1);
+    const error = errorOf(await probe.settled);
 
     const timeout = asTimeout(error);
     expect(timeout.timeoutMs).toBe(300); // 300, not 10_000
@@ -630,6 +645,7 @@ describe('deadline composition', () => {
     expect(timeout.timeoutMs).toBe(50);
     expect(timeout.details).toEqual({ source: 'timeout' });
     expect(only(rec.seen).deadlineAt).toBe(50);
+    expect(h.runtime.pendingTimers).toBe(0);
   });
 
   it('fails fast when the inherited deadline has already passed', async () => {
@@ -665,6 +681,7 @@ describe('deadline composition', () => {
       () => wide.runtime.advance(900),
     );
     expect(asTimeout(wideError).timeoutMs).toBe(900);
+    expect(wide.runtime.pendingTimers).toBe(0);
 
     const bounded = testContext({ hints: { timeoutMs: 900 }, deadlineAt: 200 });
     const boundedRec = recordNext(bounded.call, neverSettles);
@@ -674,6 +691,7 @@ describe('deadline composition', () => {
     );
     expect(asTimeout(boundedError).timeoutMs).toBe(200);
     expect(asTimeout(boundedError).details).toEqual({ source: 'deadline' });
+    expect(bounded.runtime.pendingTimers).toBe(0);
   });
 
   it('rejects an invalid hints.timeoutMs with RangeError', () => {
@@ -691,6 +709,7 @@ describe('deadline composition', () => {
       () => h.runtime.advance(40),
     );
     expect(asTimeout(error).timeoutMs).toBe(40);
+    expect(h.runtime.pendingTimers).toBe(0);
   });
 });
 
@@ -719,7 +738,7 @@ describe('nesting total-timeout outside attempt-timeout', () => {
 
   it('the inner (attempt) timeout wins when it is smaller (TO-15)', async () => {
     const { outcome, inner, pending } = await runNested(100, 10, 10);
-    const timeout = asTimeout(outcome.ok ? undefined : outcome.error);
+    const timeout = asTimeout(errorOf(outcome));
     expect(timeout.scope).toBe('attempt');
     expect(timeout.timeoutMs).toBe(10);
     expect(timeout.retryable).toBe(true);
@@ -729,7 +748,7 @@ describe('nesting total-timeout outside attempt-timeout', () => {
 
   it('the outer (call) timeout wins when it is smaller (TO-16)', async () => {
     const { outcome, inner, pending } = await runNested(10, 100, 10);
-    const timeout = asTimeout(outcome.ok ? undefined : outcome.error);
+    const timeout = asTimeout(errorOf(outcome));
     expect(timeout.scope).toBe('call');
     expect(timeout.timeoutMs).toBe(10);
     expect(timeout.retryable).toBe(false);
@@ -745,11 +764,12 @@ describe('nesting total-timeout outside attempt-timeout', () => {
     };
     process.on('unhandledRejection', onUnhandled);
     try {
-      const { outcome } = await runNested(10, 100, 10);
+      const { outcome, pending } = await runNested(10, 100, 10);
       expect(outcome.ok).toBe(false);
       await flushMacrotask();
       await flushMacrotask();
       expect(unhandled).toEqual([]);
+      expect(pending).toBe(0); // both nested deadlines cleared
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
