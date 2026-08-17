@@ -8,6 +8,8 @@ five values in T6.3 are the calibration points that pin them down.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 
 from interlayer.core.models import Edge, EdgeOrigin
@@ -140,7 +142,7 @@ def test_t6_4_smaller_employer_gives_strictly_higher_confidence():
         for s in sizes
     ]
     assert values == sorted(values, reverse=True)
-    assert all(a > b for a, b in zip(values, values[1:], strict=False))
+    assert all(a > b for a, b in pairwise(values))
 
 
 def test_t6_4_smaller_cohort_gives_strictly_higher_confidence():
@@ -151,7 +153,7 @@ def test_t6_4_smaller_cohort_gives_strictly_higher_confidence():
         )
         for s in sizes
     ]
-    assert all(a > b for a, b in zip(values, values[1:], strict=False))
+    assert all(a > b for a, b in pairwise(values))
 
 
 def test_t6_4_longer_tenure_raises_confidence_and_saturates_at_four_years():
@@ -161,7 +163,7 @@ def test_t6_4_longer_tenure_raises_confidence_and_saturates_at_four_years():
         )
 
     rising = [at(y) for y in (1, 2, 3, 4)]
-    assert all(a < b for a, b in zip(rising, rising[1:], strict=False))
+    assert all(a < b for a, b in pairwise(rising))
     # marginal returns beyond "we overlapped for a few years" are negligible
     assert at(10) == pytest.approx(at(4))
     assert at(40) == pytest.approx(at(4))

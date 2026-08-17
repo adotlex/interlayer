@@ -77,23 +77,27 @@ _MONTHS: dict[str, int] = {
 
 _PRESENT_TOKENS = frozenset({"present", "current", "now", "ongoing", "till date", "-"})
 
-_SENIORITY_RULES: tuple[tuple[tuple[str, ...], Seniority], ...] = (
-    (("intern", "internship", "apprentice"), Seniority.INTERN),
+#: Ordered ladder. ``phrases`` match as substrings; ``tokens`` must match a whole
+#: word. The split matters: "Senior Director" contains the letters "cto", and a
+#: naive substring rule promotes it to CXO — exactly the kind of quiet mis-grading
+#: that makes a seniority field worse than no seniority field at all.
+_SENIORITY_RULES: tuple[tuple[tuple[str, ...], tuple[str, ...], Seniority], ...] = (
+    (("intern", "apprentice"), (), Seniority.INTERN),
     (
-        ("chief ", "cto", "ceo", "cfo", "coo", "cio", "cmo", "cxo", "c-level", "c level"),
+        ("chief ", "c-level", "c level"),
+        ("cto", "ceo", "cfo", "coo", "cio", "cmo", "cxo"),
         Seniority.CXO,
     ),
-    (("founder", "owner", "proprietor", "managing partner"), Seniority.OWNER),
-    (
-        ("vice president", "vice-president", "vp ", " vp", "svp", "evp", "avp"),
-        Seniority.VP,
-    ),
-    (("director", "head of", "head, ", "partner"), Seniority.DIRECTOR),
-    (("lead", "principal", "staff ", "manager"), Seniority.LEAD),
-    (("senior", "sr.", "sr "), Seniority.SENIOR),
-    (("junior", "jr.", "jr ", "graduate", "trainee", "entry"), Seniority.JUNIOR),
-    (("associate", "mid-level", "mid level"), Seniority.MID),
+    (("founder", "owner", "proprietor", "managing partner"), (), Seniority.OWNER),
+    (("vice president", "vice-president"), ("vp", "svp", "evp", "avp"), Seniority.VP),
+    (("director", "head of", "partner"), ("head",), Seniority.DIRECTOR),
+    (("principal",), ("lead", "leader", "staff", "manager"), Seniority.LEAD),
+    (("senior",), ("sr",), Seniority.SENIOR),
+    (("junior", "graduate", "trainee", "entry-level"), ("jr",), Seniority.JUNIOR),
+    (("associate", "mid-level", "mid level"), (), Seniority.MID),
 )
+
+_TOKEN_RE = re.compile(r"[\w+#]+", flags=re.UNICODE)
 
 _PUNCT = re.compile(r"[^\w\s]", flags=re.UNICODE)
 _WS = re.compile(r"\s+", flags=re.UNICODE)
@@ -251,8 +255,9 @@ def normalize_seniority(raw: Any) -> Seniority:
     if not isinstance(raw, str) or not raw.strip():
         return Seniority.UNKNOWN
     text = f" {raw.casefold().strip()} "
-    for markers, seniority in _SENIORITY_RULES:
-        if any(marker in text for marker in markers):
+    tokens = set(_TOKEN_RE.findall(text))
+    for phrases, words, seniority in _SENIORITY_RULES:
+        if any(phrase in text for phrase in phrases) or (tokens & set(words)):
             return seniority
     return Seniority.UNKNOWN
 

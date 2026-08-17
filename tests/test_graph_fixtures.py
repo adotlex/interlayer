@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
-import scipy.sparse as sp
 
 from interlayer.core.models import Edge, EdgeOrigin, Firm, Member, Target
 
@@ -130,7 +129,9 @@ def hub_fixture(
     return members, targets, edges, truth, hub_members
 
 
-def sbm_igraph(sizes: Sequence[int], p_in: float, p_out: float, seed: int = 42, planted: bool = False):
+def sbm_igraph(
+    sizes: Sequence[int], p_in: float, p_out: float, seed: int = 42, planted: bool = False
+):
     """A sorted-order igraph built from a networkx SBM / planted-partition graph.
 
     Ground truth is block order, per R3: ``sum([[i]*s for i,s in enumerate(sizes)], [])``.
@@ -155,9 +156,7 @@ def sbm_igraph(sizes: Sequence[int], p_in: float, p_out: float, seed: int = 42, 
     index = {n: i for i, n in enumerate(names)}
     g = ig.Graph(n=len(names))
     g.vs["name"] = [str(n) for n in names]
-    g.add_edges(sorted({(min(index[u], index[v]), max(index[u], index[v])) for u, v in graph.edges()}))
+    g.add_edges(
+        sorted({(min(index[u], index[v]), max(index[u], index[v])) for u, v in graph.edges()})
+    )
     return g, [truth_by_node[n] for n in names]
-
-
-def dense_projection(matrix: sp.spmatrix) -> np.ndarray:
-    return np.asarray(matrix.todense())

@@ -40,7 +40,7 @@ try:  # pragma: no cover - exercised by the fallback test via monkeypatch
 
     HAVE_LEIDENALG = True
 except ImportError:  # pragma: no cover
-    la = None  # type: ignore[assignment]
+    la = None
     HAVE_LEIDENALG = False
 
 DEFAULT_GAMMA = 1.0
@@ -133,7 +133,9 @@ def _weight_attr(g: ig.Graph) -> str | None:
     return "weight" if "weight" in g.edge_attributes() else None
 
 
-def leiden_once(g: ig.Graph, *, gamma: float = DEFAULT_GAMMA, seed: int = DEFAULT_BASE_SEED) -> list[int]:
+def leiden_once(
+    g: ig.Graph, *, gamma: float = DEFAULT_GAMMA, seed: int = DEFAULT_BASE_SEED
+) -> list[int]:
     """One Leiden run. Falls back to Louvain when ``leidenalg`` is unavailable.
 
     ``RBConfigurationVertexPartition`` is used rather than

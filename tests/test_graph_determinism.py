@@ -22,9 +22,9 @@ import numpy as np
 import pytest
 
 from interlayer.graph import analyse, membership_fingerprint
+from interlayer.graph.build import build_bipartite
 from interlayer.graph.cluster import leiden_consensus, to_igraph
 from interlayer.graph.project import project
-from interlayer.graph.build import build_bipartite
 from test_graph_fixtures import (
     GOLDEN_MEMBERSHIP,
     golden_edge_records,
@@ -174,7 +174,9 @@ def test_t2_4_negative_control_unsorted_order_is_not_deterministic():
     for _ in range(12):
         order = sorted(nodes)
         index = {n: i for i, n in enumerate(order)}
-        edges = sorted({(min(index[u], index[v]), max(index[u], index[v])) for u, v in graph.edges()})
+        edges = sorted(
+            {(min(index[u], index[v]), max(index[u], index[v])) for u, v in graph.edges()}
+        )
         g = ig.Graph(n=len(order))
         g.add_edges(edges)
         part = la.find_partition(

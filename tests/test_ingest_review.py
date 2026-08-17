@@ -95,6 +95,15 @@ def test_the_unadjudicated_count_is_what_the_report_states(queue: ReviewQueue) -
     assert queue.unadjudicated_count == 3
 
 
+def test_items_render_through_the_cli_attribute_names(queue: ReviewQueue) -> None:
+    """`interlayer review` reads these names off whatever it is handed."""
+    item = queue.pending()[0]
+    assert item.raw == "Citadel Technology"
+    assert item.member_count == item.occurrences == 3
+    assert item.rule and item.score is not None
+    assert item.suggested_firm is Firm.CITADEL
+
+
 # ---------------------------------------------------------------------------
 # Adjudicating
 # ---------------------------------------------------------------------------

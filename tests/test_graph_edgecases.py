@@ -376,3 +376,44 @@ def test_params_are_recorded_on_the_result():
     assert params["consensus_applied"] is True
     assert params["k"] == 3
     assert params["modularity"] == pytest.approx(0.26, abs=1e-6)
+
+
+# --- the anti-``bipartite.sets()`` affordance --------------------------------
+
+
+def test_bridge_members_takes_the_explicit_node_set():
+    """``bridge_members`` exists so nobody needs ``bipartite.sets()`` to find M."""
+    from interlayer.graph import bridge_members
+
+    members = golden_members()
+    targets = golden_targets()
+    bg = build_bipartite(members, targets, golden_edge_records())
+
+    found = bridge_members(bg.graph, [m.member_id for m in members])
+    assert found == sorted(m.member_id for m in members)
+    # a member id absent from the graph, and a zero-degree one, are both excluded
+    assert bridge_members(bg.graph, ["m0", "not_present"]) == ["m0"]
+
+
+def test_bridge_members_excludes_zero_degree_members():
+    from interlayer.graph import bridge_members
+
+    members = [make_member("m0"), make_member("m_lonely")]
+    targets = [make_target("t0")]
+    bg = build_bipartite(members, targets, [Edge(member_id="m0", target_id="t0")])
+    assert bg.member_ids == ("m0",)
+    # m_lonely never made it into the graph, so it cannot be a bridge
+    assert bridge_members(bg.graph, ["m0", "m_lonely"]) == ["m0"]
+
+
+def test_stability_scores_average_in_cluster_co_association():
+    import numpy as np
+
+    from interlayer.graph import stability_scores
+
+    # 3 nodes; 0 and 1 always co-cluster, 2 co-clusters with them half the time
+    co = np.array([[1.0, 1.0, 0.5], [1.0, 1.0, 0.5], [0.5, 0.5, 1.0]])
+    assert stability_scores([0, 0, 0], co) == pytest.approx([0.75, 0.75, 0.5])
+    # split into its own cluster, node 2 is a singleton and scores 1.0
+    assert stability_scores([0, 0, 1], co) == pytest.approx([1.0, 1.0, 1.0])
+    assert stability_scores([], np.zeros((0, 0))) == []

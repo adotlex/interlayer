@@ -110,6 +110,36 @@ def test_ingest_is_deterministic_end_to_end() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The error hierarchy hangs off core.errors
+# ---------------------------------------------------------------------------
+
+
+def test_ingest_errors_are_catchable_as_interlayer_errors() -> None:
+    from interlayer.core.errors import ComplianceError, IngestError, InterlayerError
+    from interlayer.ingest import (
+        ConnectionsCsvError,
+        NeedsReviewError,
+        RegistryError,
+        ReviewError,
+    )
+
+    for cls in (ConnectionsCsvError, RegistryError, ReviewError):
+        assert issubclass(cls, IngestError)
+        assert issubclass(cls, InterlayerError)
+    # PRIV-20 is a control refusing, not a parse failing.
+    assert issubclass(NeedsReviewError, ComplianceError)
+    assert not issubclass(NeedsReviewError, IngestError)
+
+
+def test_the_barrier_raises_a_compliance_error() -> None:
+    from interlayer.core.errors import ComplianceError
+
+    matcher = CompanyMatcher(load_registry())
+    with pytest.raises(ComplianceError):
+        require_admissible(matcher.classify("Citadel Technology"))
+
+
+# ---------------------------------------------------------------------------
 # Boundary 1 — the analysis layer never touches the network (PRIV-01/02)
 # ---------------------------------------------------------------------------
 

@@ -15,25 +15,24 @@ working types from their own modules::
 Keeping ``__init__`` free of submodule imports is what lets every submodule
 import :class:`IngestError` from the package without an import cycle.
 
-**Note for B1 (``core/errors.py``).** Every exception raised by this package
-derives from :class:`IngestError`, which derives from :class:`ValueError`.
-``core.errors.IngestError`` did not exist when this package was written, so it
-is not imported here. When it lands, either (a) make it an alias of this class,
-or (b) make it a ``ValueError`` subclass and re-export ours from it — both keep
-``except ValueError`` working for existing callers. Recorded in
-``docs/wave2-notes/B2.md``.
+The two roots come from ``core.errors``, which reserves ``IngestError`` for this
+package and ``ComplianceError`` for a stated privacy control. The subclasses
+below only narrow them, so ``except InterlayerError`` in the CLI catches
+everything ingest raises.
 """
 
 from __future__ import annotations
 
+from interlayer.core.errors import ComplianceError, IngestError
 
-class IngestError(ValueError):
-    """Base class for every ingest-layer failure.
-
-    A ``ValueError`` subclass on purpose: the ingest layer's failures are all
-    "this input is not what it claims to be", and callers written before
-    ``core.errors`` existed can still catch them.
-    """
+__all__ = [
+    "ComplianceError",
+    "ConnectionsCsvError",
+    "IngestError",
+    "NeedsReviewError",
+    "RegistryError",
+    "ReviewError",
+]
 
 
 class ConnectionsCsvError(IngestError):
@@ -51,19 +50,11 @@ class ReviewError(IngestError):
     or adjudicating to a firm the registry does not know."""
 
 
-class NeedsReviewError(IngestError):
+class NeedsReviewError(ComplianceError):
     """Raised when a ``needs_review`` record is pushed toward the graph.
 
     PRIV-20 makes ``needs_review`` a hard barrier rather than a hint: the
     caller must not be able to get such a record into the analysis layer
-    without a human adjudication.
+    without a human adjudication. A ``ComplianceError``, not an
+    ``IngestError`` — nothing failed to parse; a control refused.
     """
-
-
-__all__ = [
-    "ConnectionsCsvError",
-    "IngestError",
-    "NeedsReviewError",
-    "RegistryError",
-    "ReviewError",
-]

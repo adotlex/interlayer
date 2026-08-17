@@ -145,17 +145,11 @@ def project(
     )
 
 
-def project_ra(bg: BipartiteGraph, **kwargs: object) -> Projection:
-    """The default projection, named for the pipeline step that calls it."""
-    return project(bg, weighting="ra", **kwargs)  # type: ignore[arg-type]
-
-
 __all__ = [
     "ROUND_DP",
     "Projection",
     "Weighting",
     "biadjacency_matrix",
     "project",
-    "project_ra",
     "target_weight_vector",
 ]

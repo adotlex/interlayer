@@ -6,22 +6,28 @@ even when a component is missing or broken, so that ``--help`` still works and
 the user gets a sentence explaining what is unavailable instead of a traceback
 from a package they have never heard of.
 
+Three guarantees hold for every command here.
+
+* A component that is **absent** produces a message naming it. See
+  :func:`_require`.
+* A component that is **present but does not expose what the CLI calls**
+  produces a message naming the symbol. See :func:`_symbol`.
+* A component that **raises** produces a message naming the component and the
+  fault. See :func:`_guard`. Nothing reaches the terminal as a traceback.
+
 The commands that only render — ``report`` and ``next`` — depend on nothing but
 ``core.models`` and this repository's own ``report`` package. They read the
 analysis snapshot that ``analyse`` writes, so a stored result stays readable
-even if the graph engine cannot be loaded.
-
-Where a command must call into another work package, the entry point it looks
-for is declared in :data:`INTEGRATION` rather than hard-coded at the call site.
-That table is the integration contract; ``docs/wave2-notes/B5.md`` records it.
+even when the graph engine cannot be loaded at all.
 """
 
 from __future__ import annotations
 
+import contextlib
 import importlib
-import inspect
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Annotated, Any, NoReturn
@@ -47,32 +53,16 @@ DEFAULT_STATE_ROOT = Path.home() / ".interlayer"
 SNAPSHOT_NAME = "analysis.json"
 PRIVACY_FILENAME = "PRIVACY.md"
 
-#: What each command needs from another work package, and the entry points it
-#: will accept. Aliases exist because these packages are built in parallel;
-#: the first name in each tuple is the contract, the rest are tolerated.
-INTEGRATION: dict[str, tuple[str, tuple[str, ...]]] = {
-    "config": ("interlayer.core.config", ("load_config", "load", "Config")),
-    "store": ("interlayer.core.store", ("open_store", "Store", "connect", "open")),
-    "connections": (
-        "interlayer.ingest.connections_csv",
-        ("parse_connections", "read_connections", "parse_file", "parse", "load"),
-    ),
-    "targets": (
-        "interlayer.ingest.targets",
-        ("load_targets", "load_registry", "load", "all_targets", "registry"),
-    ),
-    "review": (
-        "interlayer.ingest.review",
-        ("pending", "list_pending", "load_queue", "queue"),
-    ),
-    "graph": (
-        "interlayer.graph",
-        ("analyse", "analyze", "run", "run_pipeline", "build_analysis"),
-    ),
-    "retention": (
-        "interlayer.core.retention",
-        ("purge", "purge_all", "sweep"),
-    ),
+#: The components this CLI drives, and what each one is for. Recorded in one
+#: place because they are built by other work packages; ``docs/wave2-notes/
+#: B5.md`` carries the same table as the integration contract.
+INTEGRATION: dict[str, tuple[str, str]] = {
+    "config": ("interlayer.core.config", "configuration"),
+    "store": ("interlayer.core.store", "local database"),
+    "retention": ("interlayer.core.retention", "retention sweep and erasure"),
+    "connections": ("interlayer.ingest.connections_csv", "Connections.csv parser"),
+    "targets": ("interlayer.ingest.targets", "target registry"),
+    "graph": ("interlayer.graph", "graph engine"),
 }
 
 
@@ -92,80 +82,63 @@ def _import(name: str) -> ModuleType:
     """Single indirection for every lazy import.
 
     Kept as a named function so a test can simulate a half-built source tree
-    without depending on which packages happen to exist yet.
+    without depending on which packages happen to exist at the time.
     """
     return importlib.import_module(name)
 
 
 def _require(key: str, feature: str) -> ModuleType:
     """Import the component registered under *key*, or exit cleanly."""
-    module_name, _ = INTEGRATION[key]
+    module_name, what = INTEGRATION[key]
     try:
         return _import(module_name)
     except ImportError as exc:
         _abort(
-            f"'{feature}' needs the {module_name} component, which this install does "
-            f"not provide ({exc}).",
+            f"'{feature}' needs the {module_name} component -- the {what} -- which this "
+            f"install does not provide ({exc}).",
             hint=(
-                "That part of interlayer is not built or failed to import. "
-                "Commands that only read a stored result -- 'report', 'next', "
-                "'privacy' -- still work."
+                "That part of interlayer is not built or failed to import. Commands that "
+                "only read a stored result -- 'report', 'next', 'privacy' -- still work."
             ),
         )
 
 
-def _entry(module: ModuleType, key: str, feature: str) -> Any:
-    """Find the callable this CLI was written against, or exit cleanly."""
-    _, candidates = INTEGRATION[key]
-    for name in candidates:
-        fn = getattr(module, name, None)
-        if callable(fn):
-            return fn
+def _symbol(module: ModuleType, feature: str, *names: str) -> Any:
+    """Fetch the first of *names* the component actually exposes."""
+    for name in names:
+        candidate = getattr(module, name, None)
+        if candidate is not None:
+            return candidate
     _abort(
         f"'{feature}' found {module.__name__} but no entry point in it.",
         hint=(
-            "Expected one of: " + ", ".join(candidates) + ". "
+            "Expected one of: " + ", ".join(names) + ". "
             "See docs/wave2-notes/B5.md for the contract the CLI calls."
         ),
     )
 
 
-def _call(fn: Any, feature: str, **available: Any) -> Any:
-    """Call *fn* with whichever of *available* its signature actually accepts.
+@contextlib.contextmanager
+def _guard(feature: str, component: str) -> Iterator[None]:
+    """Turn any fault inside a component into a sentence.
 
-    The components this CLI drives are written by other work packages, so their
-    exact signatures are not known here. Passing only the parameters a callable
-    declares is more robust than guessing, and a parameter that cannot be
-    satisfied produces an explanation rather than a TypeError.
+    A user running ``interlayer analyse`` should never be shown a stack trace
+    through three packages. They should be told which component failed and
+    what it said, and given a non-zero exit code.
     """
     try:
-        sig = inspect.signature(fn)
-    except (TypeError, ValueError):  # pragma: no cover - builtins only
-        return fn()
-
-    accepts_kwargs = any(
-        p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-    )
-    kwargs = {k: v for k, v in available.items() if k in sig.parameters or accepts_kwargs}
-
-    missing = [
-        name
-        for name, p in sig.parameters.items()
-        if p.default is inspect.Parameter.empty
-        and p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
-        and name not in kwargs
-    ]
-    if missing:
+        yield
+    except (typer.Exit, typer.Abort, KeyboardInterrupt):
+        raise
+    except Exception as exc:
         _abort(
-            f"'{feature}' cannot call {getattr(fn, '__name__', fn)}: it requires "
-            f"{', '.join(missing)}, which the CLI does not know how to supply.",
+            f"'{feature}' failed inside {component}: {type(exc).__name__}: {exc}",
             hint="See docs/wave2-notes/B5.md for the contract the CLI calls.",
         )
-    return fn(**kwargs)
 
 
 # ---------------------------------------------------------------------------
-# Paths and configuration
+# Paths, configuration and the store
 # ---------------------------------------------------------------------------
 
 
@@ -182,6 +155,36 @@ def _snapshot_path(state_root: Path, explicit: Path | None = None) -> Path:
     return explicit if explicit is not None else state_root / SNAPSHOT_NAME
 
 
+def _load_config(root: Path, feature: str) -> Any:
+    module = _require("config", feature)
+    loader = _symbol(module, feature, "load_config", "default_config")
+    with _guard(feature, "interlayer.core.config"):
+        try:
+            return loader(overrides={"state_root": root})
+        except TypeError:
+            return loader()
+
+
+@contextlib.contextmanager
+def _open_store(root: Path, feature: str) -> Iterator[tuple[Any, Any, Any]]:
+    """Open the store with the retention sweep run first, and always close it.
+
+    Going through ``retention.startup`` rather than opening the store directly
+    is what makes "old records are swept before anything reads them" a property
+    of every command instead of a rule each one has to remember.
+    """
+    config = _load_config(root, feature)
+    module = _require("retention", feature)
+    startup = _symbol(module, feature, "startup")
+    with _guard(feature, "interlayer.core.retention"):
+        store, sweep = startup(config)
+    try:
+        yield store, config, sweep
+    finally:
+        with contextlib.suppress(Exception):
+            store.close()
+
+
 def _config_values(state_root: Path) -> dict[str, Any]:
     """Config values the report header is obliged to state.
 
@@ -194,68 +197,49 @@ def _config_values(state_root: Path) -> dict[str, Any]:
         "retain_emails": False,
         "include_inferred": False,
     }
-    module_name, candidates = INTEGRATION["config"]
+    module_name, _ = INTEGRATION["config"]
     try:
         module = _import(module_name)
     except ImportError:
         return defaults
-    for name in candidates:
-        fn = getattr(module, name, None)
-        if fn is None:
-            continue
-        try:
-            cfg = fn(state_root=state_root) if _accepts(fn, "state_root") else fn()
-        except Exception:
-            # A broken config must not stop a report rendering. The header will
-            # state the documented defaults, which is honest and still useful.
-            continue
-        for key in defaults:
-            value = getattr(cfg, key, None)
-            if value is not None:
-                defaults[key] = value
+    loader = getattr(module, "load_config", None) or getattr(module, "default_config", None)
+    if loader is None:
         return defaults
+    try:
+        try:
+            cfg = loader(overrides={"state_root": state_root})
+        except TypeError:
+            cfg = loader()
+    except Exception:
+        # A broken config must not stop a report rendering. The header will
+        # state the documented defaults, which is honest and still useful.
+        return defaults
+    for key in defaults:
+        value = getattr(cfg, key, None)
+        if value is not None:
+            defaults[key] = value
     return defaults
 
 
-def _accepts(fn: Any, param: str) -> bool:
-    try:
-        return param in inspect.signature(fn).parameters
-    except (TypeError, ValueError):  # pragma: no cover - builtins only
-        return False
+def _person_names(members: Any, targets: Any) -> dict[str, str]:
+    """``id -> display name`` for the report layer.
 
-
-def _describe(obj: Any) -> str:
-    """One-line rendering of a record from a package whose shape is not fixed."""
-    for attrs in (
-        ("target_id", "firm", "first_name", "last_name", "title"),
-        ("member_id", "first_name", "last_name", "company_raw"),
-        ("raw", "status", "firm", "rule", "score"),
-    ):
-        if hasattr(obj, attrs[0]):
-            parts = []
-            for a in attrs:
-                v = getattr(obj, a, None)
-                if v not in (None, ""):
-                    parts.append(f"{a}={getattr(v, 'value', v)}")
-            return "  ".join(parts)
-    return str(obj)
-
-
-def _emit_records(records: Any, empty: str) -> None:
-    if isinstance(records, dict):
-        records = list(records.values())
-    try:
-        items = list(records)
-    except TypeError:
-        typer.echo(str(records))
-        return
-    if not items:
-        typer.echo(empty)
-        return
-    for item in items:
-        typer.echo(_describe(item))
-    typer.echo("")
-    typer.echo(f"{len(items)} record(s).")
+    Built here rather than in the graph engine because it is a presentation
+    concern: the analysis works in ids and never needs to know a name.
+    """
+    names: dict[str, str] = {}
+    for m in members:
+        label = " ".join(p for p in (m.first_name, m.last_name) if p).strip()
+        if label:
+            names[m.member_id] = label
+    for t in targets:
+        label = " ".join(p for p in (t.first_name, t.last_name) if p).strip()
+        firm = getattr(getattr(t, "firm", None), "value", None)
+        if label and firm:
+            label = f"{label} ({firm})"
+        if label:
+            names[t.target_id] = label
+    return names
 
 
 def _load_snapshot(path: Path) -> tuple[Any, dict[str, str]]:
@@ -272,7 +256,7 @@ def _load_snapshot(path: Path) -> tuple[Any, dict[str, str]]:
         _abort(f"cannot read the analysis snapshot at {path}: {exc}")
     try:
         return load_result(payload)
-    except (KeyError, TypeError, ValueError) as exc:
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
         _abort(f"{path} is not a usable interlayer analysis snapshot: {exc}")
 
 
@@ -296,29 +280,29 @@ StateRootOpt = Annotated[
 
 
 @app.command()
-def init(
-    state_root: StateRootOpt = None,
-    force: Annotated[
-        bool, typer.Option("--force", help="Rewrite the config even if one already exists.")
-    ] = False,
-) -> None:
-    """Create the local state directory and write the default configuration.
+def init(state_root: StateRootOpt = None) -> None:
+    """Create the local state directory and open the database.
 
     Safe to run twice. The defaults are the private ones: retention 90 days,
     emails discarded at parse time, inferred edges excluded from analysis, and
     the first-party export as the only enabled acquisition adapter.
     """
     root = _state_root(state_root)
-    module = _require("config", "init")
-    fn = _entry(module, "config", "init")
-    root.mkdir(parents=True, exist_ok=True)
-    result = _call(fn, "init", state_root=root, force=force, create=True)
-    typer.echo(f"state root: {root}")
-    if result is not None:
-        for key in ("retention_days", "retain_emails", "include_inferred", "enabled_adapters"):
-            value = getattr(result, key, None)
+    with _open_store(root, "init") as (store, config, sweep):
+        typer.echo(f"state root: {getattr(store, 'state_root', root)}")
+        for key in (
+            "retention_days",
+            "retain_emails",
+            "include_inferred",
+            "allow_contact_fields",
+            "enabled_adapters",
+        ):
+            value = getattr(config, key, None)
             if value is not None:
                 typer.echo(f"  {key}: {value}")
+        deleted = getattr(sweep, "deleted", None)
+        if deleted:
+            typer.echo(f"retention sweep removed: {deleted}")
     typer.echo("")
     typer.echo("Next: interlayer ingest <path-to-Connections.csv>")
 
@@ -332,7 +316,8 @@ def ingest(
             dir_okay=False,
             readable=True,
             help="Connections.csv from your official LinkedIn data export "
-            "(Settings > Data privacy > Get a copy of your data).",
+            "(Settings > Data privacy > Get a copy of your data). A .zip archive "
+            "of the whole export works too.",
         ),
     ],
     state_root: StateRootOpt = None,
@@ -352,30 +337,53 @@ def ingest(
     """
     root = _state_root(state_root)
     module = _require("connections", "ingest")
-    fn = _entry(module, "connections", "ingest")
-    records = _call(
-        fn,
-        "ingest",
-        path=connections,
-        source=connections,
-        state_root=root,
-        retain_emails=retain_emails,
-    )
-    count = len(records) if hasattr(records, "__len__") else "an unknown number of"
-    typer.echo(f"parsed {count} connections from {connections}")
+    parse = _symbol(module, "ingest", "parse_connections_csv", "parse_connections", "parse")
+
+    with _guard("ingest", "interlayer.ingest.connections_csv"):
+        parsed = parse(connections, retain_emails=retain_emails)
+
+    members = getattr(parsed, "members", parsed)
+    with _open_store(root, "ingest") as (store, _config, _sweep):
+        with _guard("ingest", "interlayer.core.store"):
+            written = store.add_members(members)
+        counts = _counts(store)
+
+    typer.echo(f"parsed {len(members)} connections from {connections}")
+    if written is not None:
+        stored = getattr(written, "written", None)
+        suppressed = getattr(written, "suppressed", None)
+        if stored is not None:
+            typer.echo(f"stored {stored}")
+        if suppressed:
+            typer.echo(f"{suppressed} suppressed by an existing tombstone")
+    if counts:
+        typer.echo("store: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+    for warning in getattr(parsed, "warnings", ()) or ():
+        typer.secho(f"warning: {warning}", fg=typer.colors.YELLOW)
     if not retain_emails:
         typer.echo("email addresses discarded at parse time (PRIV-06)")
 
 
+def _counts(store: Any) -> dict[str, int]:
+    try:
+        return dict(store.counts())
+    except Exception:
+        return {}
+
+
 @app.command()
 def targets(
-    state_root: StateRootOpt = None,
     firm: Annotated[
         str | None,
         typer.Option("--firm", help="Show only one firm, e.g. jane_street or citadel."),
     ] = None,
+    registry: Annotated[
+        Path | None,
+        typer.Option("--registry", help="Read a targets.yaml from here instead."),
+    ] = None,
+    state_root: StateRootOpt = None,
 ) -> None:
-    """Show the target registry — the people and firms you are trying to reach.
+    """Show the target registry — the firms you are trying to reach.
 
     Citadel and Citadel Securities are separate entries on purpose: they are
     legally distinct firms with separate LinkedIn pages, and merging them
@@ -383,17 +391,42 @@ def targets(
     """
     root = _state_root(state_root)
     module = _require("targets", "targets")
-    fn = _entry(module, "targets", "targets")
-    records = _call(fn, "targets", state_root=root, firm=firm)
-    if firm and not _accepts(fn, "firm"):
-        records = [r for r in records if str(getattr(getattr(r, "firm", ""), "value", "")) == firm]
-    _emit_records(records, "No targets registered.")
+    load = _symbol(module, "targets", "load_registry", "load")
+
+    with _guard("targets", "interlayer.ingest.targets"):
+        loaded = load(registry) if registry is not None else load()
+        entities = list(getattr(loaded, "entities", loaded))
+
+    if firm:
+        entities = [e for e in entities if _firm_name(e) == firm]
+    if not entities:
+        typer.echo("No target entities registered." if not firm else f"No entities for {firm}.")
+        return
+
+    for entity in entities:
+        name = getattr(entity, "canonical", getattr(entity, "id", entity))
+        typer.echo(f"{getattr(entity, 'id', '?'):<24} {_firm_name(entity):<20} {name}")
+    typer.echo("")
+    typer.echo(f"{len(entities)} entity(ies).")
+
+    with contextlib.suppress(typer.Exit), _open_store(root, "targets") as (store, _c, _s):
+        counts = _counts(store)
+        if counts.get("targets"):
+            typer.echo(f"{counts['targets']} target person(s) harvested into the store.")
+
+
+def _firm_name(entity: Any) -> str:
+    firm = getattr(entity, "firm", None)
+    return str(getattr(firm, "value", firm) or "")
 
 
 @app.command()
 def review(
     state_root: StateRootOpt = None,
     limit: Annotated[int, typer.Option("--limit", "-n", help="Show at most this many.")] = 50,
+    show_all: Annotated[
+        bool, typer.Option("--all", help="Include items that have already been decided.")
+    ] = False,
 ) -> None:
     """List the ambiguous company matches waiting for a human decision.
 
@@ -402,10 +435,35 @@ def review(
     Entertainment', so the tool refuses to guess and asks instead.
     """
     root = _state_root(state_root)
-    module = _require("review", "review")
-    fn = _entry(module, "review", "review")
-    records = _call(fn, "review", state_root=root, limit=limit)
-    _emit_records(records, "Review queue is empty. Nothing is being held out of the graph.")
+    with _open_store(root, "review") as (store, _config, _sweep):
+        with _guard("review", "interlayer.core.store"):
+            items = list(store.reviews(pending_only=not show_all))
+        pending = len(items) if not show_all else _pending_count(store)
+
+    if not items:
+        typer.echo("Review queue is empty. Nothing is being held out of the graph.")
+        return
+
+    for item in items[:limit]:
+        raw = getattr(item, "raw", "?")
+        suggested = getattr(item, "firm", None) or getattr(item, "suggested_firm", None)
+        typer.echo(
+            f"{raw:<42} rule={getattr(item, 'rule', '')} "
+            f"score={getattr(item, 'score', '')} "
+            f"suggests={getattr(suggested, 'value', suggested) or '-'} "
+            f"members={getattr(item, 'member_count', '')}"
+        )
+    if len(items) > limit:
+        typer.echo(f"... and {len(items) - limit} more")
+    typer.echo("")
+    typer.echo(f"{pending} item(s) held OUT of the graph until adjudicated (PRIV-20).")
+
+
+def _pending_count(store: Any) -> int:
+    try:
+        return int(store.pending_review_count())
+    except Exception:
+        return 0
 
 
 @app.command()
@@ -433,8 +491,27 @@ def analyse(
 
     root = _state_root(state_root)
     module = _require("graph", "analyse")
-    fn = _entry(module, "graph", "analyse")
-    result = _call(fn, "analyse", state_root=root, include_inferred=include_inferred)
+    run = _symbol(module, "analyse", "analyse", "analyze", "run")
+
+    with _open_store(root, "analyse") as (store, config, _sweep):
+        with _guard("analyse", "interlayer.core.store"):
+            members = list(store.members())
+            target_records = list(store.targets())
+            edges = list(store.edges())
+            unadjudicated = _pending_count(store)
+        names = _person_names(members, target_records)
+
+    with _guard("analyse", "interlayer.graph"):
+        result = _run_analysis(
+            run,
+            members=members,
+            targets=target_records,
+            edges=edges,
+            include_inferred=include_inferred or bool(getattr(config, "include_inferred", False)),
+            unadjudicated_count=unadjudicated,
+            config=config,
+        )
+
     if not hasattr(result, "coverage") or not hasattr(result, "brokerage"):
         _abort(
             f"the graph component returned {type(result).__name__}, not an AnalysisResult.",
@@ -444,7 +521,7 @@ def analyse(
     destination = _snapshot_path(root, out)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(
-        json.dumps(dump_result(result), indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(dump_result(result, names), indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
     cov = result.coverage
@@ -465,6 +542,24 @@ def analyse(
             fg=typer.colors.YELLOW,
         )
     typer.echo(f"snapshot: {destination}")
+
+
+def _run_analysis(
+    run: Any, *, members: Any, targets: Any, edges: Any, config: Any, **kw: Any
+) -> Any:
+    """Call the graph entry point, passing tuning parameters only if it takes them."""
+    optional = {
+        "min_confidence": getattr(config, "min_inferred_confidence", None),
+        "gamma": getattr(config, "resolution", None),
+        "base_seed": getattr(config, "base_seed", None),
+        "n_runs": getattr(config, "consensus_runs", None),
+    }
+    kwargs = {**kw, **{k: v for k, v in optional.items() if v is not None}}
+    try:
+        return run(members, targets, edges, **kwargs)
+    except TypeError:
+        # An engine with a narrower signature still gets the essentials.
+        return run(members, targets, edges, **kw)
 
 
 @app.command()
@@ -552,10 +647,11 @@ def next_targets(
     result, name_map = _load_snapshot(_snapshot_path(root, input_path))
 
     cov = result.coverage
+    exact = cov.n_targets_total > 0 and cov.n_targets_harvested >= cov.n_targets_total
     typer.echo(
         f"coverage {cov.n_targets_harvested}/{cov.n_targets_total} "
         f"({cov.fraction * 100:.1f}%) -- reach figures are "
-        f"{'exact' if cov.n_targets_harvested >= cov.n_targets_total > 0 else 'lower bounds'}"
+        f"{'exact' if exact else 'lower bounds'}"
     )
     typer.echo("")
 
@@ -655,26 +751,23 @@ def purge(
     identifier = person or target
 
     if not yes:
-        what = (
-            f"every record under {root}"
-            if purge_all
-            else f"{scope} {identifier} under {root}"
-        )
+        what = f"every record under {root}" if purge_all else f"{scope} {identifier} under {root}"
         typer.confirm(f"Permanently erase {what}?", abort=True)
 
-    module = _require("retention", "purge")
-    fn = _entry(module, "retention", "purge")
-    _call(
-        fn,
-        "purge",
-        state_root=root,
-        scope=scope,
-        identifier=identifier,
-        member_id=person,
-        target_id=target,
-        all=purge_all,
-    )
-    typer.echo(f"purged: {scope}" + (f" {identifier}" if identifier else ""))
+    with (
+        _open_store(root, "purge") as (store, _config, _sweep),
+        _guard("purge", "interlayer.core.store"),
+    ):
+        if purge_all:
+            removed = store.purge_all()
+            typer.echo(f"purged: all ({len(list(removed))} path(s) removed)")
+            return
+        result = store.purge_person(identifier) if person else store.purge_target(identifier)
+    typer.echo(f"purged: {scope} {identifier}")
+    for field in ("members_deleted", "targets_deleted", "edges_deleted", "tombstones_written"):
+        value = getattr(result, field, None)
+        if value is not None:
+            typer.echo(f"  {field}: {value}")
 
 
 if __name__ == "__main__":  # pragma: no cover

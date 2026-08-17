@@ -78,6 +78,13 @@ class ReviewItem:
     def raw(self) -> str:
         return self.raw_examples[0] if self.raw_examples else self.key
 
+    @property
+    def member_count(self) -> int:
+        """Alias for :attr:`occurrences`, under the name B5's ``interlayer
+        review`` renderer reads. Same number: rows carrying this employer
+        string, and therefore members held out of the graph by this one item."""
+        return self.occurrences
+
 
 @dataclass(frozen=True, slots=True)
 class ReviewDecision:

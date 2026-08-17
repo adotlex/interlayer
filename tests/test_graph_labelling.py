@@ -9,6 +9,8 @@ the join. The field-aware analyzer is the actual fix.
 
 from __future__ import annotations
 
+from itertools import pairwise
+
 import pytest
 
 from interlayer.core.models import Member
@@ -157,7 +159,7 @@ def test_t7_3_no_bigram_straddles_two_attribute_fields(three_clusters):
     for member in by_id.values():
         for field in rich_attributes(member):
             tokens = field.lower().split()
-            legal_bigrams.update(f"{a} {b}" for a, b in zip(tokens, tokens[1:], strict=False))
+            legal_bigrams.update(f"{a} {b}" for a, b in pairwise(tokens))
 
     for label in labels.values():
         for term in label.split(", "):

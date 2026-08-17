@@ -511,7 +511,13 @@ def is_admissible(match: CompanyMatch) -> bool:
 
 
 def require_admissible(match: CompanyMatch) -> Firm:
-    """Return the firm, or refuse. The only sanctioned way into the graph."""
+    """Return the firm, or refuse. The only sanctioned way into the graph.
+
+    Raises :class:`~interlayer.ingest.NeedsReviewError` (a ``ComplianceError``)
+    when a control is holding the record back, and ``ValueError`` when the
+    string simply resolved to no target firm — two different problems, and the
+    caller usually wants to handle only the first.
+    """
     if match.status is MatchStatus.NEEDS_REVIEW:
         raise NeedsReviewError(
             f"{match.raw!r} is needs_review ({match.rule}) and cannot enter the graph "

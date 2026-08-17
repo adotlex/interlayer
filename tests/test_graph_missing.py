@@ -93,7 +93,7 @@ def _drop_target_columns(targets, fraction, seed=11):
     """Mark a fraction of targets unharvested — the tri-state way to "drop"."""
     rng = np.random.default_rng(seed)
     ordered = sorted(targets, key=lambda t: t.target_id)
-    n_drop = int(round(fraction * len(ordered)))
+    n_drop = round(fraction * len(ordered))
     dropped = set(rng.choice(len(ordered), size=n_drop, replace=False).tolist())
     return [
         Target(target_id=t.target_id, firm=t.firm, harvested=(i not in dropped))

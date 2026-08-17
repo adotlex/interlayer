@@ -56,7 +56,12 @@ from interlayer.graph.cluster import (
 )
 from interlayer.graph.fingerprint import membership_fingerprint, result_fingerprint
 from interlayer.graph.inference import Cues, infer_edge, infer_edge_confidence, infer_edges
-from interlayer.graph.label import AttributeFn, default_attributes, label_clusters, top_shared_targets
+from interlayer.graph.label import (
+    AttributeFn,
+    default_attributes,
+    label_clusters,
+    top_shared_targets,
+)
 from interlayer.graph.nextsteps import next_targets as compute_next_targets
 from interlayer.graph.project import Projection, Weighting, project
 from interlayer.graph.score import DEFAULT_WEIGHTS, composite_score, percentile_rank, wilson_lb

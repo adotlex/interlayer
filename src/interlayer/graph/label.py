@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
+from itertools import pairwise
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -71,7 +72,7 @@ def _field_analyzer(document: str) -> list[str]:
     for field in document.split(SENTINEL):
         tokens = [t for t in TOKEN_RE.findall(field.lower()) if t not in STOPWORDS]
         terms.extend(tokens)
-        terms.extend(f"{a} {b}" for a, b in zip(tokens, tokens[1:], strict=False))
+        terms.extend(f"{a} {b}" for a, b in pairwise(tokens))
     return terms
 
 

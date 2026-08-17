@@ -91,7 +91,7 @@ class ManualCsvCollector:
         )
 
     def kind_of(self, path: Path) -> str | None:
-        """``"mutuals"``, ``"targets"`` or ``None``."""
+        """``"mutuals"``, ``"targets"`` or ``None`` — strict, all required columns."""
         header = _sniff_header(path)
         if header is None:
             return None
@@ -101,10 +101,29 @@ class ManualCsvCollector:
             return "targets"
         return None
 
+    def probable_kind(self, path: Path) -> str | None:
+        """Best guess for a header that is close but incomplete.
+
+        A file missing one required column should get "you are missing
+        ``capture_status``", not "unrecognised file". The guess only decides which
+        reader produces the diagnostic; it never relaxes what the reader requires.
+        """
+        header = _sniff_header(path)
+        if header is None:
+            return None
+        present = {cell.strip() for cell in header}
+        mutuals = set(schemas.values("csv.mutuals_columns"))
+        targets = set(schemas.values("csv.targets_columns"))
+        mutuals_score = len(present & (mutuals - targets))
+        targets_score = len(present & (targets - mutuals))
+        if mutuals_score == targets_score == 0:
+            return None
+        return "mutuals" if mutuals_score >= targets_score else "targets"
+
     # -- collection --------------------------------------------------------
 
     def collect(self, path: Path) -> CollectionResult:
-        kind = self.kind_of(path)
+        kind = self.kind_of(path) or self.probable_kind(path)
         if kind == "targets":
             table, result = self.read_targets(path)
             self.targets.update(table)
@@ -226,11 +245,12 @@ class ManualCsvCollector:
             captures.append(capture)
             results.append(records_from_capture(capture))
 
+        # ``captures`` is not repeated here: each pruned capture already travels
+        # inside its own result from ``records_from_capture``.
         base = CollectionResult(
             collector=self.name,
             posture=self.compliance_posture,
             targets=tuple(targets),
-            captures=tuple(captures),
             diagnostics=tuple(diagnostics),
         )
         merged = merge_results(

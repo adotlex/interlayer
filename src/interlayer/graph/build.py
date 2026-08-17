@@ -136,7 +136,9 @@ def select_edges(
 
     # T8.5 — deduplicate. Sort so the survivor of a duplicate group is chosen
     # deterministically: observed beats inferred, then higher confidence wins.
-    kept.sort(key=lambda e: (e.member_id, e.target_id, e.origin is EdgeOrigin.INFERRED, -e.confidence))
+    kept.sort(
+        key=lambda e: (e.member_id, e.target_id, e.origin is EdgeOrigin.INFERRED, -e.confidence)
+    )
     deduped: list[Edge] = []
     seen: set[tuple[str, str]] = set()
     for e in kept:
@@ -158,7 +160,7 @@ def build_bipartite(
     include_inferred: bool = False,
     min_confidence: float = 0.5,
 ) -> BipartiteGraph:
-    """Build the bipartite graph over bridges × harvested targets.
+    """Build the bipartite graph over bridges x harvested targets.
 
     Members with ``d_m == 0`` are dropped before any graph work (R3 step 5):
     typically ``|B| << |M|``, since most of a 500-10,000 connection export touches

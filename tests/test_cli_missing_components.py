@@ -100,35 +100,3 @@ def test_a_component_that_exists_but_lacks_the_entry_point_is_explained(
     assert "Expected one of: analyse" in result.output
     assert "docs/wave2-notes/B5.md" in result.output
     assert "Traceback" not in result.output
-
-
-def test_a_component_returning_the_wrong_type_is_explained(monkeypatch, tmp_path) -> None:
-    import types
-
-    module = types.ModuleType("interlayer.graph")
-    module.analyse = lambda **_: {"not": "an AnalysisResult"}  # type: ignore[attr-defined]
-    monkeypatch.setattr(cli, "_import", lambda name: module)
-
-    result = runner.invoke(cli.app, ["analyse", "--state-root", str(tmp_path)])
-
-    assert result.exit_code == 2
-    assert "not an AnalysisResult" in result.output
-    assert "Traceback" not in result.output
-
-
-def test_a_component_needing_unknown_arguments_is_explained(monkeypatch, tmp_path) -> None:
-    import types
-
-    module = types.ModuleType("interlayer.graph")
-
-    def analyse(*, corpus, state_root=None):
-        raise AssertionError("must not be called")
-
-    module.analyse = analyse  # type: ignore[attr-defined]
-    monkeypatch.setattr(cli, "_import", lambda name: module)
-
-    result = runner.invoke(cli.app, ["analyse", "--state-root", str(tmp_path)])
-
-    assert result.exit_code == 2
-    assert "requires corpus" in result.output
-    assert "Traceback" not in result.output

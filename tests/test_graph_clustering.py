@@ -136,3 +136,102 @@ def test_t4_4_ra_still_recovers_the_planted_structure(hub):
 
     assert len(set(membership)) == 6
     assert normalized_mutual_info_score(truth_ordered, membership) >= 0.85
+
+
+# --- fallback, gamma sweep, and the network boundary -------------------------
+
+
+def test_louvain_fallback_runs_when_leidenalg_is_unavailable(monkeypatch):
+    """The fallback exists for a platform with no ``leidenalg`` wheel.
+
+    Louvain is only a fallback because it can emit internally disconnected
+    communities — a "pocket of bridges" that is not one pocket. On a fixture this
+    clean it still finds the right three.
+    """
+    from interlayer.graph import cluster as cluster_module
+    from test_graph_fixtures import golden_edge_records, golden_members, golden_targets
+
+    bg = build_bipartite(golden_members(), golden_targets(), golden_edge_records())
+    p = project(bg)
+    g = to_igraph(p.matrix, p.member_ids)
+
+    monkeypatch.setattr(cluster_module, "HAVE_LEIDENALG", False)
+    membership = cluster_module.leiden_once(g, gamma=1.0, seed=42)
+
+    assert len(set(membership)) == 3
+    blocks = {
+        frozenset(name for name, c in zip(g.vs["name"], membership, strict=True) if c == cid)
+        for cid in set(membership)
+    }
+    assert blocks == {
+        frozenset({"m0", "m1", "m2"}),
+        frozenset({"m3", "m4", "m5"}),
+        frozenset({"m6", "m7", "m8"}),
+    }
+
+
+def test_louvain_fallback_restores_the_global_igraph_rng(monkeypatch):
+    """Seeding igraph's global RNG must not leak into the rest of the process."""
+    import random as random_module
+
+    import igraph as ig
+
+    from interlayer.graph import cluster as cluster_module
+    from test_graph_fixtures import golden_edge_records, golden_members, golden_targets
+
+    bg = build_bipartite(golden_members(), golden_targets(), golden_edge_records())
+    g = to_igraph(project(bg).matrix, bg.member_ids)
+
+    monkeypatch.setattr(cluster_module, "HAVE_LEIDENALG", False)
+    cluster_module.leiden_once(g, seed=42)
+
+    # a fresh Graph.Erdos_Renyi must still vary, i.e. the RNG is not pinned
+    ig.set_random_number_generator(random_module)
+    samples = {ig.Graph.Erdos_Renyi(n=30, p=0.3).ecount() for _ in range(8)}
+    assert len(samples) > 1
+
+
+def test_select_gamma_prefers_the_most_stable_resolution():
+    from interlayer.graph.cluster import GAMMA_SWEEP, select_gamma
+    from test_graph_fixtures import golden_edge_records, golden_members, golden_targets
+
+    bg = build_bipartite(golden_members(), golden_targets(), golden_edge_records())
+    g = to_igraph(project(bg).matrix, bg.member_ids)
+    chosen = select_gamma(g, n_runs=5)
+    assert chosen in GAMMA_SWEEP
+    # every gamma is perfectly stable on this fixture, so the tie-break wins
+    assert chosen == 1.0
+
+
+def test_select_gamma_is_deterministic():
+    from interlayer.graph.cluster import select_gamma
+    from test_graph_fixtures import hub_fixture
+
+    members, targets, edges, _, _ = hub_fixture(with_hub=False)
+    bg = build_bipartite(members, targets, edges)
+    g = to_igraph(project(bg).matrix, bg.member_ids)
+    assert len({select_gamma(g, n_runs=5) for _ in range(3)}) == 1
+
+
+def test_boundary_1_graph_package_imports_no_network_module():
+    """Setup guide §3, boundary 1: the analysis layer never touches the network."""
+    import ast
+    from pathlib import Path
+
+    banned = {"httpx", "requests", "urllib", "socket", "http", "ftplib", "telnetlib"}
+    package = Path(__file__).resolve().parents[1] / "src" / "interlayer" / "graph"
+
+    offenders: list[str] = []
+    for path in sorted(package.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                if name.split(".")[0] in banned:
+                    offenders.append(f"{path.name}:{node.lineno} imports {name}")
+    assert offenders == []
