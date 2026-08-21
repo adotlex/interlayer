@@ -117,6 +117,11 @@ class MatchResult:
     score: float
     reason: str
     alias: str | None = None
+    alternatives: tuple[str, ...] = ()
+    """Entity keys the string could equally be, for a REVIEW an operator has to
+    settle. ``entity_key`` stays None in that case on purpose: an ambiguous
+    string must not be filed under either candidate while it is still ambiguous.
+    """
 
     @property
     def firm_key(self) -> str | None:
@@ -176,12 +181,14 @@ def _identify_negative(
 
     Purely cosmetic for the verdict -- the string is rejected either way -- but
     it lets ``Citadel Broadcasting`` and ``Citadel Broadcasting Corporation``
-    land on one canonical Org instead of two look-alike strays.
+    land on one canonical Org instead of two look-alike strays. Bucket entries
+    are skipped: they veto, they never name.
     """
     for form in raw_forms:
         for key in _in_scope(gaz.exact.get(form), scope):
-            if not gaz.entities[key].is_firm:
-                return key, gaz.entities[key].tier
+            entity = gaz.entities[key]
+            if not entity.is_firm and entity.is_specific_org:
+                return key, entity.tier
     return None, None
 
 
