@@ -9,11 +9,7 @@
  */
 
 import { expect } from 'vitest';
-import {
-  type AnyInterlayerError,
-  isInterlayerError,
-  ProviderError,
-} from '../../src/core/errors.ts';
+import { type AnyInterlayerError, isInterlayerError } from '../../src/core/errors.ts';
 import type { ResilienceOptions } from '../../src/core/policy.ts';
 import type { Capability, ErasedHandler, ProviderRecord } from '../../src/core/types.ts';
 import { capability, defineContract } from '../../src/registry/index.ts';
@@ -167,7 +163,7 @@ export async function expectNoLeakedTimers(runtime: FakeRuntime): Promise<void> 
  * 3. Reading `cause` chains
  * ------------------------------------------------------------------ */
 
-export interface ChainLink {
+interface ChainLink {
   readonly name: string;
   /** The Interlayer `code`, or `undefined` for a foreign error. */
   readonly code: string | undefined;
@@ -175,7 +171,7 @@ export interface ChainLink {
 }
 
 /** Every link of the `cause` chain, outermost first. */
-export function causeChain(error: unknown, max = 12): readonly ChainLink[] {
+function causeChain(error: unknown, max = 12): readonly ChainLink[] {
   const out: ChainLink[] = [];
   let cur: unknown = error;
   for (let i = 0; i < max && cur instanceof Error; i++) {
@@ -241,9 +237,4 @@ export function rejects(thrown: unknown): () => Promise<Say> {
  */
 export function stripCapability(record: ProviderRecord, name: string): void {
   (record.capabilities as Map<string, ErasedHandler>).delete(name);
-}
-
-/** A distinguishable, non-retryable domain failure. */
-export function domainFailure(message: string): ProviderError {
-  return new ProviderError(message);
 }
