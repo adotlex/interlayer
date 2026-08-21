@@ -73,7 +73,10 @@ describe('ErrorCode: VALIDATION', () => {
     const picky = defineProvider(probe, {
       id: 'picky',
       capabilities: {
-        run: async (input): Promise<Say> => ({ a: parse(input, object({ q: string() })).q, by: 'p' }),
+        run: async (input): Promise<Say> => ({
+          a: parse(input, object({ q: string() })).q,
+          by: 'p',
+        }),
       },
     });
     const healthy = defineProvider(probe, {
@@ -87,10 +90,7 @@ describe('ErrorCode: VALIDATION', () => {
     });
     const layer = createLayer({ contract: probe, providers: [picky, healthy], runtime });
 
-    const error = await rejectionOf(
-      runtime,
-      layer.call('run', { q: 7 } as unknown as Ask),
-    );
+    const error = await rejectionOf(runtime, layer.call('run', { q: 7 } as unknown as Ask));
 
     expect(hasCode(error, 'VALIDATION')).toBe(true);
     // Walking the chain would just multiply one caller mistake by N providers.
@@ -329,7 +329,12 @@ describe('ErrorCode: TIMEOUT', () => {
       contract: probe,
       providers: [hung],
       runtime,
-      resilience: { retry: false, breaker: false, rateLimit: false, timeout: { attemptTimeoutMs: 200 } },
+      resilience: {
+        retry: false,
+        breaker: false,
+        rateLimit: false,
+        timeout: { attemptTimeoutMs: 200 },
+      },
     });
 
     const error = await rejectionOf(runtime, layer.call('run', { q: 'x' }));
@@ -354,10 +359,7 @@ describe('ErrorCode: TIMEOUT', () => {
       resilience: NO_POLICIES,
     });
 
-    const error = await rejectionOf(
-      runtime,
-      layer.call('run', { q: 'x' }, { deadlineAt: 750 }),
-    );
+    const error = await rejectionOf(runtime, layer.call('run', { q: 'x' }, { deadlineAt: 750 }));
 
     // With no timeout policy the facade is the only thing watching the signal.
     expect(hasCode(error, 'TIMEOUT')).toBe(true);
@@ -750,17 +752,26 @@ const REACHABILITY: Record<ErrorCode, Reachability> = {
     kind: 'reachable',
     how: 'no provider declares it, or a handler disappears mid-flight',
   },
-  NO_PROVIDER: { kind: 'reachable', how: 'all implementers disabled; hint matches none; maxProviders 0' },
+  NO_PROVIDER: {
+    kind: 'reachable',
+    how: 'all implementers disabled; hint matches none; maxProviders 0',
+  },
   TRANSPORT: { kind: 'reachable', how: 'handler throws TransportError; passes through unchanged' },
   TIMEOUT: { kind: 'reachable', how: 'attempt timeout, total timeout, or a deadlineAt breach' },
   CANCELLED: { kind: 'reachable', how: 'caller aborts the signal at any layer of the stack' },
-  RATE_LIMITED: { kind: 'reachable', how: 'exhausted token bucket in reject mode, or a full queue' },
+  RATE_LIMITED: {
+    kind: 'reachable',
+    how: 'exhausted token bucket in reject mode, or a full queue',
+  },
   CIRCUIT_OPEN: { kind: 'reachable', how: 'breaker trips and fails the next call fast' },
   BULKHEAD_FULL: {
     kind: 'reserved',
     why: 'no bulkhead unit was built; nothing in src/ constructs one and POLICY_ORDER has no such kind',
   },
-  PROVIDER_ERROR: { kind: 'reachable', how: 'any unclassified handler throw, via toInterlayerError' },
+  PROVIDER_ERROR: {
+    kind: 'reachable',
+    how: 'any unclassified handler throw, via toInterlayerError',
+  },
   RETRY_EXHAUSTED: { kind: 'reachable', how: '>= 2 failed attempts against one provider' },
   ALL_FAILED: { kind: 'reachable', how: '>= 2 failed providers in one fallback chain' },
 };

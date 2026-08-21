@@ -249,8 +249,9 @@ describe('non-Error objects', () => {
    */
   it('[KNOWN BUG] a null-prototype throw loses the original value and its attempt event', async () => {
     const runtime = createFakeRuntime();
-    const bag: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-    bag['reason'] = 'upstream refused';
+    // A prototype-less bag: the standard shape for a safe dictionary, and the
+    // one object `String()` refuses to convert.
+    const bag = Object.assign(Object.create(null) as object, { reason: 'upstream refused' });
 
     const weird = defineProvider(probe, {
       id: 'weird',
