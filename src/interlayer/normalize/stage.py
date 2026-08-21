@@ -340,7 +340,7 @@ def _date_key(value: ApproxDate | None) -> int:
 def run(cfg: Settings) -> None:
     """Resolve employers and schools, then write orgs, affiliations and reviews."""
     people = read_jsonl(cfg.people_path, Person, produced_by="ingest")
-    gaz = load_gazetteer(cfg.gazetteer_path)
+    gaz = load_gazetteer(cfg.resolved_gazetteer)
 
     drafts: dict[str, _OrgDraft] = {}
     claims: list[_Claim] = []

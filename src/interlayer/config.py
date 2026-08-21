@@ -136,7 +136,7 @@ class Settings(BaseModel):
 
     # --- artifact paths ----------------------------------------------------
     @property
-    def gazetteer_path(self) -> Path:
+    def resolved_gazetteer(self) -> Path:
         """The gazetteer to actually load.
 
         The default is relative, which silently made every invocation outside a

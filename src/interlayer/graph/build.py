@@ -163,7 +163,7 @@ def build_graph(
     """Build the graph in memory. Pure: no reads, no writes, no clock, no RNG."""
     _validate(cfg)
     damping = resolve_size_damping(size_damping)
-    sizes = load_firm_sizes(cfg.gazetteer_path)
+    sizes = load_firm_sizes(cfg.resolved_gazetteer)
     org_by_id: Mapping[str, Org] = {org.org_id: org for org in orgs}
 
     projection = project(
