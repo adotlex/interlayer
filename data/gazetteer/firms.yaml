@@ -1,0 +1,865 @@
+# =============================================================================
+# interlayer :: firm gazetteer
+# =============================================================================
+# Hand-curated entity list for resolving free-text LinkedIn EMPLOYER / SCHOOL
+# strings to canonical firms. This file is the source of truth; fuzzy matching
+# is only ever used to reach an alias in this file, never to invent a match.
+#
+# Matching contract (see docs/research/04-entity-resolution.md):
+#   1. normalize(input) -> norm
+#   2. if norm in exact_index  -> accept (score 100)
+#   3. if any negative_alias of ANY entity matches norm exactly -> REJECT
+#      (negative aliases are global vetoes, evaluated before fuzzy)
+#   4. fuzzy match norm against alias_index; accept iff score >= threshold
+#      AND the field-context guard passes.
+#
+# Field-context guard:
+#   entity_type: university      -> only matchable from an EDUCATION field
+#   entity_type: fund|market_maker -> only matchable from a POSITION field
+#   A "The Citadel" string in EDUCATION is the college. The same string in a
+#   POSITION field is *ambiguous*, not the college: emit citadel_ambiguous.
+#
+# schema_version bumps when field semantics change.
+# =============================================================================
+schema_version: 1
+updated: 2026-08-21
+notes: >
+  Headcounts are order-of-magnitude figures for size-weighting only (rarity of a
+  connection scales ~1/headcount). They are third-party estimates from 2024-2026
+  and are NOT authoritative. LinkedIn slugs were gathered from public search
+  result metadata; linkedin.com is egress-blocked from the research sandbox, so
+  slugs marked `verified: false` should be re-checked against a live browser
+  before being used as a hard key.
+
+# -----------------------------------------------------------------------------
+# TIER 1 - primary targets
+# -----------------------------------------------------------------------------
+entities:
+
+  - key: jane_street
+    canonical_name: Jane Street
+    entity_type: market_maker          # prop trading / liquidity provider
+    tier: target
+    priority: 1
+    hq: New York, NY
+    founded: 2000
+    approx_headcount: 3700             # LinkedIn "employees on LinkedIn" ~3.7k, 2026
+    headcount_confidence: medium
+    linkedin_slug: jane-street-global
+    linkedin_slug_verified: false
+    linkedin_alt_slugs:                # legacy / duplicate pages people still list
+      - jane-street-capital-llc
+      - janestreetgroup
+    domains:
+      - janestreet.com
+    email_domains:
+      - janestreet.com
+    aliases:
+      - Jane Street
+      - Jane Street Capital
+      - Jane Street Capital LLC
+      - Jane Street Capital, LLC
+      - Jane Street Group
+      - Jane Street Group LLC
+      - Jane Street Group, LLC
+      - Jane Street Trading
+      - Jane Street Markets
+      - Jane Street Execution Services
+      - Jane Street Execution Services LLC
+      - Jane Street Financial
+      - Jane Street Financial Limited
+      - Jane Street Financial Ltd
+      - Jane Street Europe
+      - Jane Street Europe Limited
+      - Jane Street Netherlands
+      - Jane Street Netherlands B.V.
+      - Jane Street Asia
+      - Jane Street Asia Trading
+      - Jane Street Asia Trading Limited
+      - Jane Street Hong Kong
+      - Jane Street Hong Kong Limited
+      - Jane Street Singapore
+      - Jane Street Singapore Pte Ltd
+      - Jane Street Australia
+      - Jane Street India
+      - Jane Street Global
+      - JaneStreet
+      - Jane St
+      - Jane St.
+    weak_aliases:                      # require corroboration (title/school/domain)
+      - JS                             # far too short to trust on its own
+      - JSG
+    negative_aliases:                  # exact-normalized vetoes
+      - Jane Street Entertainment
+      - Jane Street Coffee
+      - Jane Street Cafe
+      - Jane Street Dental
+      - Jane Street Dental Practice
+      - Jane Street Studios
+      - Jane Street Bakery
+      - Jane Street Realty
+      - Jane Street Medical Centre
+      - Jane Street Animal Hospital
+      - Jane Street Public School
+    negative_patterns:                 # regex, case-insensitive, on normalized text
+      - '\b\d+\s+jane\s+street\b'                       # "123 Jane Street ..." = an address
+      - 'jane street (coffee|cafe|bakery|deli|pizza|salon|dental|clinic|vet|animal|florist|laundry|motors|garage|tattoo|gym|church|school|realty|properties|apartments|storage|entertainment|studios|records|press|books|market|grocery)'
+    culture_signals:                   # ancillary adjacency evidence, never sufficient alone
+      languages: [OCaml]
+      keywords:
+        - OCaml
+        - functional programming
+        - "Jane Street Symposium"
+        - "JS Puzzles"
+        - "Estimathon"
+        - "Figgie"
+        - "Trading Interview"
+        - "Academy of Math and Programming"
+        - AMP
+      pipelines:
+        - IMO
+        - IOI
+        - Putnam
+        - ICPC
+        - USACO
+        - Codeforces
+        - "Math Olympiad"
+        - "quant trading intern"
+    role_families: [trader, quant_researcher, swe, ops, recruiter, compliance]
+
+  - key: citadel_llc
+    canonical_name: Citadel
+    legal_name: Citadel Enterprise Americas LLC
+    entity_type: fund                  # multi-strategy hedge fund
+    tier: target
+    priority: 1
+    hq: Miami, FL
+    prior_hq: Chicago, IL
+    founded: 1990
+    founder: Kenneth C. Griffin
+    approx_headcount: 3150             # ~3,153 (2024)
+    headcount_confidence: medium
+    linkedin_slug: citadel-llc
+    linkedin_slug_verified: false
+    linkedin_alt_slugs:
+      - surveyor-capital
+      - ashler-capital
+      - citadel-global-equities
+    domains:
+      - citadel.com
+    email_domains:
+      - citadel.com
+    sibling_entity: citadel_securities # SEPARATE COMPANY. Never merge.
+    aliases:
+      - Citadel
+      - Citadel LLC
+      - Citadel L.L.C.
+      - Citadel Advisors
+      - Citadel Advisors LLC
+      - Citadel Americas
+      - Citadel Americas LLC
+      - Citadel Enterprise
+      - Citadel Enterprise Americas
+      - Citadel Enterprise Americas LLC
+      - Citadel Investment Group
+      - Citadel Investment Group LLC
+      - Citadel Asset Management
+      - Citadel Global Equities
+      - Citadel Global Fixed Income
+      - Citadel Global Credit
+      - Citadel Commodities
+      - Citadel Technology
+      - Citadel Europe
+      - Citadel Europe LLP
+      - Citadel Asia
+      - Citadel Hong Kong
+      - Citadel Singapore
+      - Citadel Management
+      # internal pod / business-unit brands that appear verbatim as employers
+      - Surveyor Capital
+      - Surveyor Capital (A Citadel Company)
+      - Ashler Capital
+      - Ashler Capital (A Citadel Company)
+      - Aptigon Capital
+      - Aptigon Capital (A Citadel Company)
+      - Pioneer Path Capital
+      - Ravelin Technology
+      - Global Quantitative Strategies
+    weak_aliases:
+      - GQS
+    negative_aliases:
+      - The Citadel
+      - The Citadel, The Military College of South Carolina
+      - Citadel Military College of South Carolina
+      - The Citadel Alumni Association
+      - The Citadel School of Engineering
+      - The Citadel Graduate College
+      - The Citadel Career Center
+      - Citadel Broadcasting
+      - Citadel Broadcasting Corporation
+      - Citadel Broadcasting Co
+      - Citadel Communications
+      - Citadel Credit Union
+      - Citadel Federal Credit Union
+      - Citadel Banking
+      - Citadel Defense
+      - Citadel Defense Company
+      - Citadel Servicing
+      - Citadel Servicing Corporation
+      - Citadel Group
+      - The Citadel Group
+      - Citadel Group Australia
+      - Citadel Security Software
+      - Citadel Information Group
+      - Citadel Insurance
+      - Citadel Insurance Services
+      - Citadel Health
+      - Citadel Salisbury
+      - Citadel Mall
+      - Citadel High School
+      - Citadelle
+      - La Citadelle
+    negative_patterns:
+      - 'citadel (broadcasting|communications|credit union|federal credit union|banking|bank|defense|defence|servicing|security|software|insurance|health|healthcare|hospital|mall|academy|high school|elementary|church|ministries|realty|property|properties|roofing|plumbing|construction|logistics|freight|energy|mining|wine|spirits|distillery|brewing|studios|records|press|books|gym|fitness|martial arts|storage|windows|doors|paving|solar|pest|cleaning|staffing|group|consulting)\b'
+      - '^the citadel$'
+      - 'military college'
+    culture_signals:
+      keywords:
+        - "Citadel Datathon"
+        - "Correlation One"
+        - "Citadel Invitational"
+        - "Discover Citadel"
+        - "Citadel Summer Internship"
+        - Surveyor
+        - Ashler
+      pipelines:
+        - "quant research intern"
+        - "Citadel Datathon"
+    role_families: [portfolio_manager, quant_researcher, trader, swe, analyst, ops, recruiter, compliance]
+
+  - key: citadel_securities
+    canonical_name: Citadel Securities
+    legal_name: Citadel Securities LLC
+    entity_type: market_maker
+    tier: target
+    priority: 1
+    hq: Miami, FL
+    founded: 2002
+    approx_headcount: 2350             # ~2,325-2,393 (2026)
+    headcount_confidence: medium
+    linkedin_slug: citadel-securities
+    linkedin_slug_verified: false
+    domains:
+      - citadelsecurities.com
+    email_domains:
+      - citadelsecurities.com
+    sibling_entity: citadel_llc        # SEPARATE COMPANY. Never merge.
+    aliases:
+      - Citadel Securities
+      - Citadel Securities LLC
+      - Citadel Securities LP
+      - Citadel Securities L.P.
+      - Citadel Securities (Europe)
+      - Citadel Securities Europe Limited
+      - Citadel Securities (Europe) Limited
+      - Citadel Securities GCS
+      - Citadel Securities GCS (Ireland) Limited
+      - Citadel Securities Hong Kong
+      - Citadel Securities Asia
+      - Citadel Securities Japan
+      - Citadel Securities Australia
+      - Citadel Securities Institutional
+      - Citadel Securities Americas
+      - CitSec
+      - Citsec
+    weak_aliases:
+      - CS                             # collides with Credit Suisse, Computer Science
+    negative_aliases:
+      - Citadel Security Software
+      - Citadel Securities Services      # generic phrase used by unrelated firms
+      - Citadel Security Agency
+      - Citadel Security Services
+    negative_patterns:
+      - 'citadel securit(y|ies) (software|agency|services|guards|patrol)'
+    culture_signals:
+      keywords:
+        - "market making"
+        - "options market maker"
+        - "low latency"
+        - FPGA
+        - "C++"
+    role_families: [trader, quant_researcher, swe, quant_dev, ops, recruiter, compliance]
+
+# -----------------------------------------------------------------------------
+# TIER 2 - adjacent quant firms (context / future target expansion)
+# -----------------------------------------------------------------------------
+  - key: two_sigma
+    canonical_name: Two Sigma
+    entity_type: fund
+    tier: adjacent
+    priority: 2
+    hq: New York, NY
+    approx_headcount: 2100
+    headcount_confidence: medium
+    linkedin_slug: two-sigma
+    linkedin_slug_verified: false
+    domains: [twosigma.com]
+    aliases:
+      - Two Sigma
+      - Two Sigma Investments
+      - Two Sigma Investments LP
+      - Two Sigma Investments, LP
+      - Two Sigma Securities
+      - Two Sigma Ventures
+      - TwoSigma
+      - 2 Sigma
+    weak_aliases: [TS]
+    negative_aliases:
+      - Sigma Software
+      - Sigma Computing
+      - Six Sigma
+      - Two Sigma Consulting
+    negative_patterns:
+      - '^(six|lean six) sigma'
+      - '^sigma (software|computing|designs|labs|aldrich)'
+
+  - key: hrt
+    canonical_name: Hudson River Trading
+    entity_type: market_maker
+    tier: adjacent
+    priority: 2
+    hq: New York, NY
+    approx_headcount: 1450
+    headcount_confidence: medium
+    linkedin_slug: hudson-river-trading
+    linkedin_slug_verified: false
+    domains: [hudsonrivertrading.com, hudson-trading.com]
+    aliases:
+      - Hudson River Trading
+      - Hudson River Trading LLC
+      - HRT
+      - HRT (Hudson River Trading)
+      - Hudson River Trading (HRT)
+    negative_aliases:
+      - Hudson River Community Credit Union
+      - Hudson River Bank
+      - Hudson River Healthcare
+      - Hudson Bay Capital
+      - Hudson River Park Trust
+      - HRT Training
+      - Hormone Replacement Therapy
+    negative_patterns:
+      - 'hudson river (community|bank|health|park|valley|museum|maritime|cruises)'
+
+  - key: jump
+    canonical_name: Jump Trading
+    entity_type: market_maker
+    tier: adjacent
+    priority: 2
+    hq: Chicago, IL
+    approx_headcount: 1600
+    headcount_confidence: low
+    linkedin_slug: jump-trading
+    linkedin_slug_verified: false
+    domains: [jumptrading.com, jumpcrypto.com]
+    aliases:
+      - Jump Trading
+      - Jump Trading LLC
+      - Jump Trading Group
+      - Jump Crypto
+      - Jump Liquidity
+    negative_aliases:
+      - Jump Capital        # affiliated VC arm, but a DIFFERENT company: a Jump
+                            # Capital connection is not a Jump Trading connection.
+      - Jump Rope
+      - Jumpstart
+      - JumpCloud
+      - Jump Ramp Games
+    negative_patterns:
+      - '^jump (start|cloud|rope|ship|street)'
+
+  - key: de_shaw
+    canonical_name: D. E. Shaw & Co.
+    entity_type: fund
+    tier: adjacent
+    priority: 2
+    hq: New York, NY
+    approx_headcount: 2500
+    headcount_confidence: low
+    linkedin_slug: d-e-shaw
+    linkedin_slug_verified: false
+    domains: [deshaw.com]
+    aliases:
+      - D. E. Shaw
+      - D.E. Shaw
+      - DE Shaw
+      - D E Shaw
+      - DEShaw
+      - D. E. Shaw & Co.
+      - "D. E. Shaw & Co., L.P."
+      - The D. E. Shaw Group
+      - D. E. Shaw Group
+      - D. E. Shaw India
+      - DE Shaw India Private Limited
+      - DESIS
+    negative_aliases:
+      - Shaw Communications
+      - Shaw Industries
+      - D E Shaw Research      # DESRES is a separate biotech/compute lab
+      - Shawmut
+    negative_patterns:
+      - '^shaw (communications|industries|academy|contract flooring)'
+
+  - key: optiver
+    canonical_name: Optiver
+    entity_type: market_maker
+    tier: adjacent
+    priority: 2
+    hq: Amsterdam, NL
+    approx_headcount: 2700
+    headcount_confidence: medium
+    linkedin_slug: optiver
+    linkedin_slug_verified: false
+    domains: [optiver.com]
+    aliases:
+      - Optiver
+      - Optiver Holding
+      - Optiver Holding B.V.
+      - Optiver US
+      - Optiver US LLC
+      - Optiver Australia
+      - Optiver Asia Pacific
+      - Optiver APAC
+      - Optiver Services
+    negative_aliases: []
+    negative_patterns: []
+
+  - key: imc
+    canonical_name: IMC Trading
+    entity_type: market_maker
+    tier: adjacent
+    priority: 2
+    hq: Amsterdam, NL
+    approx_headcount: 1200
+    headcount_confidence: medium
+    linkedin_slug: imc-trading
+    linkedin_slug_verified: false
+    domains: [imc.com]
+    aliases:
+      - IMC Trading
+      - IMC Financial Markets
+      - IMC B.V.
+      - IMC Chicago
+      - IMC Amsterdam
+      - IMC Asia Pacific
+      - International Marketmakers Combination
+    weak_aliases: [IMC]
+    negative_aliases:
+      - IMC Worldwide
+      - IMC Construction
+      - IMC Companies
+      - IMC Health
+      - International Medical Corps
+      - IMC Group
+    negative_patterns:
+      - '^imc (worldwide|construction|companies|health|medical|logistics|group|industries)'
+
+  - key: sig
+    canonical_name: Susquehanna International Group
+    entity_type: market_maker
+    tier: adjacent
+    priority: 2
+    hq: Bala Cynwyd, PA
+    approx_headcount: 3500
+    headcount_confidence: medium
+    linkedin_slug: susquehanna-international-group
+    linkedin_slug_verified: true
+    domains: [sig.com]
+    aliases:
+      - Susquehanna International Group
+      - Susquehanna International Group, LLP
+      - Susquehanna
+      - SIG Susquehanna
+      - Susquehanna (SIG)
+      - SIG (Susquehanna International Group)
+      - Susquehanna Investment Group
+      - SIG Asia
+      - Susquehanna Pacific
+    weak_aliases: [SIG]
+    negative_aliases:
+      - SIG Sauer
+      - SIG Group
+      - SIG Group AG
+      - SIG Combibloc
+      - SIG plc
+      - Susquehanna University
+      - Susquehanna Bank
+      - Susquehanna Health
+    negative_patterns:
+      - '^sig (sauer|group|combibloc|plc)'
+      - 'susquehanna (university|bank|health|valley|river)'
+
+  - key: virtu
+    canonical_name: Virtu Financial
+    entity_type: market_maker
+    tier: adjacent
+    priority: 2
+    hq: New York, NY
+    approx_headcount: 1000
+    headcount_confidence: medium
+    linkedin_slug: virtu-financial
+    linkedin_slug_verified: false
+    domains: [virtu.com]
+    aliases:
+      - Virtu Financial
+      - Virtu Financial Inc
+      - "Virtu Financial, Inc."
+      - Virtu Americas
+      - Virtu ITG
+      - ITG (Virtu)
+      - Virtu Execution Services
+    weak_aliases: [Virtu]
+    negative_aliases:
+      - Virtu Health
+      - Virtusa
+      - Virtue Foundation
+    negative_patterns:
+      - '^virtu(sa|e)\b'
+      - '^virtu health'
+
+  - key: millennium
+    canonical_name: Millennium Management
+    entity_type: fund
+    tier: adjacent
+    priority: 2
+    hq: New York, NY
+    approx_headcount: 6000
+    headcount_confidence: low
+    linkedin_slug: millennium-management-llc
+    linkedin_slug_verified: false
+    domains: [mlp.com]
+    aliases:
+      - Millennium Management
+      - Millennium Management LLC
+      - "Millennium Management, LLC"
+      - Millennium Partners
+      - Millennium International Management
+      - Millennium Capital Partners
+      - Millennium Capital Partners LLP
+      - MLP
+    weak_aliases: [Millennium]
+    negative_aliases:
+      - Millennium Physician Group
+      - Millennium Trust Company
+      - Millennium Health
+      - Millennium Pharmaceuticals
+      - Millennium Hotels
+      - Millennium Space Systems
+      - Millennium Challenge Corporation
+    negative_patterns:
+      - 'millennium (physician|trust|health|pharma|hotel|space|challenge|park|tower|school|bank|insurance)'
+
+  - key: point72
+    canonical_name: Point72
+    entity_type: fund
+    tier: adjacent
+    priority: 2
+    hq: Stamford, CT
+    approx_headcount: 2900
+    headcount_confidence: low
+    linkedin_slug: point72
+    linkedin_slug_verified: false
+    domains: [point72.com]
+    aliases:
+      - Point72
+      - Point72 Asset Management
+      - "Point72 Asset Management, L.P."
+      - Point 72
+      - Point72 Ventures
+      - Cubist Systematic Strategies
+      - Cubist Systematic Strategies (Point72)
+      - SAC Capital Advisors       # predecessor firm; same people, tag as legacy
+    negative_aliases:
+      - Point B
+      - Point72 Academy Alumni Association
+    negative_patterns: []
+
+# -----------------------------------------------------------------------------
+# TIER 3 - NEGATIVE ENTITIES. These exist to be matched and then REJECTED
+# (or routed to a non-target bucket). They are first-class so that a match on
+# them is an explicit, auditable "no", not a silent fuzzy miss.
+# -----------------------------------------------------------------------------
+  - key: the_citadel_college
+    canonical_name: The Citadel, The Military College of South Carolina
+    entity_type: university
+    tier: negative
+    priority: 1
+    hq: Charleston, SC
+    founded: 1842
+    approx_headcount: 40000            # ~35k+ living alumni; LinkedIn alumni index is large
+    headcount_confidence: low
+    linkedin_slug: the-citadel          # school page; VERIFY - linkedin.com/school/...
+    linkedin_slug_verified: false
+    linkedin_url_kind: school           # NB: /school/ not /company/
+    linkedin_alt_slugs:
+      - the-citadel-alumni-association
+      - the-citadel-school-of-engineering
+      - tommy-victoria-baker-school-of-business
+      - the-citadel-career-center
+    domains: [citadel.edu]
+    email_domains: [citadel.edu]
+    field_scope: [education]           # ONLY matchable from an education field
+    aliases:
+      - The Citadel
+      - The Citadel, The Military College of South Carolina
+      - The Citadel - The Military College of South Carolina
+      - Citadel Military College of South Carolina
+      - The Citadel Military College
+      - The Citadel (SC)
+      - The Citadel Graduate College
+      - The Citadel School of Engineering
+      - The Citadel Zucker Family School of Education
+      - Tommy and Victoria Baker School of Business
+      - The Citadel Alumni Association
+      - Citadel Bulldogs
+      - South Carolina Corps of Cadets
+    collision_with: [citadel_llc, citadel_securities]
+    disambiguation_rule: >
+      Bare "Citadel" in an education field -> the_citadel_college.
+      Bare "The Citadel" in a position field -> citadel_ambiguous (needs a second
+      signal: title, location, dates, or degree/major presence).
+
+  - key: citadel_broadcasting
+    canonical_name: Citadel Broadcasting Corporation
+    entity_type: unrelated
+    subtype: media
+    tier: negative
+    hq: Las Vegas, NV
+    approx_headcount: 0                # defunct; absorbed by Cumulus Media in 2011
+    status: defunct
+    linkedin_slug: citadel-broadcasting-co
+    linkedin_slug_verified: false
+    domains: []
+    aliases:
+      - Citadel Broadcasting
+      - Citadel Broadcasting Corporation
+      - Citadel Broadcasting Co
+      - Citadel Media
+      - Citadel Communications
+      - Citadel Communications Ltd
+    collision_with: [citadel_llc]
+
+  - key: citadel_credit_union
+    canonical_name: Citadel Credit Union
+    entity_type: unrelated
+    subtype: financial_services       # dangerous: "financial" context looks adjacent
+    tier: negative
+    hq: Exton, PA
+    approx_headcount: 500
+    headcount_confidence: low
+    linkedin_slug: citadel-credit-union
+    linkedin_slug_verified: false
+    domains: [citadelbanking.com]
+    aliases:
+      - Citadel Credit Union
+      - Citadel Federal Credit Union
+      - Citadel Banking
+      - Citadel CU
+    collision_with: [citadel_llc, citadel_securities]
+
+  - key: citadel_defense
+    canonical_name: Citadel Defense Company
+    entity_type: unrelated
+    subtype: defense_tech
+    tier: negative
+    hq: San Diego, CA
+    approx_headcount: 100
+    headcount_confidence: low
+    linkedin_slug: citadel-defense
+    linkedin_slug_verified: false
+    domains: [droneciti.com]
+    aliases:
+      - Citadel Defense
+      - Citadel Defense Company
+      - Citadel Defence
+      - Titan CUAS
+    collision_with: [citadel_llc]
+
+  - key: citadel_servicing
+    canonical_name: Citadel Servicing Corporation
+    entity_type: unrelated
+    subtype: mortgage_lender
+    tier: negative
+    hq: Irvine, CA
+    approx_headcount: 500
+    headcount_confidence: low
+    linkedin_slug: acralending
+    linkedin_slug_verified: false
+    domains: [citadelservicing.com, acralending.com]
+    aliases:
+      - Citadel Servicing
+      - Citadel Servicing Corporation
+      - Citadel Servicing Corp
+      - Acra Lending
+      - Citadel Servicing Corp / Acra Lending
+    collision_with: [citadel_llc]
+
+  - key: citadel_group_au
+    canonical_name: The Citadel Group Limited
+    entity_type: unrelated
+    subtype: it_services
+    tier: negative
+    hq: Canberra, Australia
+    approx_headcount: 400
+    headcount_confidence: low
+    linkedin_slug: thecitadelgroup
+    linkedin_slug_verified: false
+    domains: [citadelgroup.com.au, citadelgroupau.com]
+    aliases:
+      - The Citadel Group
+      - Citadel Group
+      - Citadel Group Australia
+      - Citadel Health
+      - Citadel-Health
+    collision_with: [citadel_llc]
+
+  - key: citadel_security_generic
+    canonical_name: Citadel (security services, generic)
+    entity_type: unrelated
+    subtype: physical_security
+    tier: negative
+    approx_headcount: 5000            # aggregate across many small unrelated firms
+    headcount_confidence: low
+    linkedin_slug: null
+    domains: []
+    aliases:
+      - Citadel Security
+      - Citadel Security Software
+      - Citadel Security Agency
+      - Citadel Security Services
+      - Citadel Protection
+      - Citadel Guard Services
+      - Citadel Risk
+      - Citadel Information Group
+      - Citadel Cyber Security
+    collision_with: [citadel_securities]
+    note: >
+      Highest-risk collision in the whole gazetteer: "Citadel Security" is one
+      token away from "Citadel Securities" and a partial_ratio matcher scores it
+      100. Only exact/token-set matching with the trailing-token check survives.
+
+  - key: jane_street_generic
+    canonical_name: Businesses on a road named Jane Street
+    entity_type: unrelated
+    subtype: toponym
+    tier: negative
+    approx_headcount: 0
+    linkedin_slug: null
+    domains: []
+    note: >
+      Jane Street is a real road in Toronto (a major arterial), in New York's
+      West Village, and in several UK/AU towns. Any "<business> Jane Street" or
+      "Jane Street <consumer noun>" string is a toponym, not the firm.
+    aliases:
+      - Jane Street Coffee
+      - Jane Street Cafe
+      - Jane Street Entertainment
+      - Jane Street Studios
+      - Jane Street Dental
+      - Jane Street Public School
+      - Jane Street Medical Centre
+      - Jane Street Animal Hospital
+      - Jane Street Bakery
+      - Jane Street Realty
+    collision_with: [jane_street]
+
+# -----------------------------------------------------------------------------
+# Global normalization config consumed by the matcher.
+# -----------------------------------------------------------------------------
+normalization:
+  legal_suffixes:
+    - inc
+    - inc.
+    - incorporated
+    - llc
+    - l.l.c.
+    - llp
+    - l.l.p.
+    - lp
+    - l.p.
+    - ltd
+    - ltd.
+    - limited
+    - plc
+    - corp
+    - corp.
+    - corporation
+    - co
+    - co.
+    - company
+    - gmbh
+    - ag
+    - sa
+    - s.a.
+    - s.a.s
+    - sas
+    - nv
+    - n.v.
+    - bv
+    - b.v.
+    - ab
+    - as
+    - oy
+    - aps
+    - pte
+    - pte.
+    - pty
+    - pvt
+    - private limited
+    - sarl
+    - s.a.r.l.
+    - srl
+    - spa
+    - s.p.a.
+    - kk
+    - k.k.
+    - kft
+    - zrt
+    - sp z oo
+    - oao
+    - ooo
+    - holdings
+    - holding
+    - group          # STRIP LAST ONLY - see docs; "Jane Street Group" -> "jane street"
+    - trust
+    - partners       # careful: "Millennium Partners" is meaningful; suffix-strip is
+                     # applied to the QUERY and the ALIAS symmetrically so it is safe
+  suffix_strip_mode: repeated_trailing   # strip repeatedly from the END only
+  noise_tokens:                          # dropped anywhere in the string
+    - the
+  # NB: "the" is dropped for the *fuzzy index* but the RAW string is retained and
+  # checked against negative_aliases first, because "The Citadel" vs "Citadel" is
+  # exactly the distinction we must preserve. See docs section 1.
+  keep_raw_for_negatives: true
+  ampersand_to_and: true
+  strip_diacritics: true
+  unicode_form: NFKC
+  casefold: true
+  collapse_whitespace: true
+  strip_punctuation: true
+  strip_parentheticals: false            # "(A Citadel Company)" is signal, keep it
+
+# -----------------------------------------------------------------------------
+# Matching thresholds (empirically derived - see docs/research/04-entity-resolution.md)
+# -----------------------------------------------------------------------------
+thresholds:
+  exact: 100
+  primary_scorer: token_set_ratio_with_containment_guard
+  accept: 92          # >= 92 -> auto-accept
+  review: 85          # 85..91 -> human/LLM review queue
+  reject: 85          # < 85 -> reject
+  weak_alias_accept: 100      # weak aliases (JS, SIG, IMC) need an EXACT hit
+  weak_alias_requires_corroboration: true
+  banned_scorers:
+    - partial_ratio   # "Citadel" vs "Citadel Broadcasting" = 100. Never use.
+    - partial_token_sort_ratio
