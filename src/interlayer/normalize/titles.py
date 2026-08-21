@@ -164,7 +164,7 @@ _ROLE_RULES: tuple[tuple[re.Pattern[str], RoleFamily], ...] = tuple(
         ),
         (
             r"\bsoftware engineer\b|\bdeveloper\b|\bswe\b|\bprogrammer\b|"
-            r"\bfull stack\b|\bengineer\b",
+            r"\bfull stack\b|\bengineer(?:ing)?\b",
             RoleFamily.SWE,
         ),
         (

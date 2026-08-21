@@ -230,7 +230,7 @@ def _cluster_label(
         if org_id in orgs and orgs[org_id].is_target
     ]
     if targets:
-        return "Possible " + " / ".join(sorted(set(targets))) + " cluster"
+        return red.scrub("Possible " + " / ".join(sorted(set(targets))) + " cluster")
     return "Unlabelled cluster"
 
 

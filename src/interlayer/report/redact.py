@@ -192,7 +192,12 @@ def _crockford(raw: bytes, length: int) -> str:
 class Redactor:
     """Single point through which every dynamic value reaches the template."""
 
-    def __init__(self, cfg: Settings, people: Iterable[Person]) -> None:
+    def __init__(
+        self,
+        cfg: Settings,
+        people: Iterable[Person],
+        safe_phrases: Iterable[str] = (),
+    ) -> None:
         self.enabled: bool = bool(cfg.redact)
         self._ident: dict[str, str] = {}
         self._key: bytes = b""
@@ -210,6 +215,7 @@ class Redactor:
                     basis = f"{person.full_name.casefold()}|{company}"
                 self._ident[person.person_id] = basis
         self._name_re: re.Pattern[str] | None = _build_name_pattern(roster)
+        self._safe_re: re.Pattern[str] | None = _build_phrase_pattern(safe_phrases)
 
     # -- identifiers -------------------------------------------------------
 
@@ -241,12 +247,42 @@ class Redactor:
             return ""
         if not self.enabled:
             return value
+        out = "".join(
+            segment if safe else self._scrub_segment(segment)
+            for segment, safe in self._split_safe(value)
+        )
+        return out.strip()
+
+    def _scrub_segment(self, value: str) -> str:
         out = _URL_RE.sub(REDACTED, value)
         out = _SLUG_RE.sub(REDACTED, out)
         out = _EMAIL_RE.sub(REDACTED, out)
         if self._name_re is not None:
             out = self._name_re.sub(REDACTED, out)
-        return out.strip()
+        return out
+
+    def _split_safe(self, value: str) -> list[tuple[str, bool]]:
+        """Split ``value`` into ``(segment, is_safe_phrase)`` runs.
+
+        Curated gazetteer firm names are not personal data and must survive the
+        scrubber intact, even when an operator happens to be connected to
+        somebody surnamed Street: "Possible Jane Street cluster" is the whole
+        point of a redacted report, and turning it into "Possible [REDACTED]
+        [REDACTED] cluster" would redact the finding rather than the person.
+        Only names this repository curated are treated as safe -- employer
+        strings that came in from the export never are.
+        """
+        if self._safe_re is None:
+            return [(value, False)]
+        parts: list[tuple[str, bool]] = []
+        cursor = 0
+        for match in self._safe_re.finditer(value):
+            if match.start() > cursor:
+                parts.append((value[cursor : match.start()], False))
+            parts.append((match.group(0), True))
+            cursor = match.end()
+        parts.append((value[cursor:], False))
+        return parts
 
     def year(self, when: ApproxDate | None) -> str | None:
         """Quantise a date to the year (P-16). Exact dates re-identify people."""
@@ -285,14 +321,17 @@ class Redactor:
         """
         if not self.enabled or self._name_re is None:
             return
-        for path, text in _walk_strings(payload, ""):
-            hit = self._name_re.search(text)
-            if hit is not None:
-                raise RedactionLeakError(
-                    f"redaction leak at {path or '<root>'}: a known personal name survived "
-                    f"into the report payload (matched {len(hit.group(0))} characters); "
-                    "refusing to write the report"
-                )
+        for path, value in _walk_strings(payload, ""):
+            for segment, safe in self._split_safe(value):
+                if safe:
+                    continue
+                hit = self._name_re.search(segment)
+                if hit is not None:
+                    raise RedactionLeakError(
+                        f"redaction leak at {path or '<root>'}: a known personal name survived "
+                        f"into the report payload (matched {len(hit.group(0))} characters); "
+                        "refusing to write the report"
+                    )
 
 
 def _walk_strings(node: Any, path: str) -> Iterable[tuple[str, str]]:
@@ -307,6 +346,15 @@ def _walk_strings(node: Any, path: str) -> Iterable[tuple[str, str]]:
     elif isinstance(node, list | tuple):
         for index, item in enumerate(node):
             yield from _walk_strings(item, f"{path}[{index}]")
+
+
+def _build_phrase_pattern(phrases: Iterable[str]) -> re.Pattern[str] | None:
+    """Alternation over phrases the scrubber and the audit must leave alone."""
+    tokens = sorted({p.strip() for p in phrases if p and p.strip()}, key=lambda t: (-len(t), t))
+    if not tokens:
+        return None
+    body = "|".join(re.escape(t) for t in tokens)
+    return re.compile(rf"(?<!\w)(?:{body})(?!\w)", re.IGNORECASE)
 
 
 def _build_name_pattern(people: Iterable[Person]) -> re.Pattern[str] | None:

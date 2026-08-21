@@ -77,6 +77,9 @@ class ReviewItem(BaseModel):
     reason: str
     candidate_key: str | None = None
     candidate_name: str | None = None
+    candidate_names: tuple[str, ...] = ()
+    """Every entity the string could be, when it could be more than one."""
+
     suggested_target_firm: TargetFirm | None = None
     title_raw: str = ""
     seniority: Seniority = Seniority.UNKNOWN
@@ -128,21 +131,34 @@ class _Claim:
     weight: float
 
 
-def _group_key(result: MatchResult, folded: str) -> str:
+def _org_entity(result: MatchResult, gaz: Gazetteer) -> Entity | None:
+    """The entity this string's Org should be built from, if any.
+
+    A bucket entry (``jane_street_generic``, ``citadel_security_generic``) is a
+    veto, not an organisation: matching one tells us the string is *not* the
+    firm, and nothing about who the employer actually is. Those fall back to a
+    surface-form Org so a coffee shop and a dental practice on the same road
+    stay separate employers.
+    """
+    if result.entity_key is None:
+        return None
+    entity = gaz.entities.get(result.entity_key)
+    return entity if entity is not None and entity.is_specific_org else None
+
+
+def _group_key(entity: Entity | None, folded: str) -> str:
     """Where this string's org lives: a gazetteer entity, or its own surface form."""
-    if result.entity_key is not None:
-        return f"gaz:{result.entity_key}"
-    return f"raw:{folded}"
+    return f"gaz:{entity.key}" if entity is not None else f"raw:{folded}"
 
 
-def _confidence(result: MatchResult) -> float:
+def _confidence(result: MatchResult, entity: Entity | None) -> float:
     """How sure we are that the affiliation points at the right org.
 
     An unresolved string gets 1.0: the person really did write that employer, and
     the org built from it is that string and nothing more. Only a gazetteer
     identification can be *wrong*, so only a gazetteer identification is damped.
     """
-    if result.entity_key is None:
+    if entity is None:
         return 1.0
     return min(1.0, result.score / 100.0)
 
@@ -304,9 +320,10 @@ def run(cfg: Settings) -> None:
         resolved = _resolve_person_strings(person, gaz, cfg, cache)
         spans = _spans(person)
         for index, (kind, raw_text, title, result) in enumerate(resolved):
-            entity = gaz.entities.get(result.entity_key) if result.entity_key else None
+            named = gaz.entities.get(result.entity_key) if result.entity_key else None
+            entity = _org_entity(result, gaz)
             folded = norm(raw_text) or raw_text.strip().casefold()
-            group = _group_key(result, folded)
+            group = _group_key(entity, folded)
             _record_org(drafts, group, raw_text.strip(), kind, entity)
             verdicts[str(result.verdict)] += 1
 
@@ -321,7 +338,7 @@ def run(cfg: Settings) -> None:
                 if kind is AffiliationKind.EMPLOYMENT
                 else None
             )
-            weight = _confidence(result) * (role_weight(role) if role else 1.0)
+            weight = _confidence(result, entity) * (role_weight(role) if role else 1.0)
             start, end = spans[index]
             claims.append(
                 _Claim(
@@ -344,9 +361,14 @@ def run(cfg: Settings) -> None:
                         verdict=result.verdict,
                         score=round(result.score, 4),
                         reason=result.reason,
-                        candidate_key=result.entity_key,
-                        candidate_name=entity.canonical_name if entity else None,
-                        suggested_target_firm=entity.target_firm if entity else None,
+                        candidate_key=result.entity_key or (result.alternatives or (None,))[0],
+                        candidate_name=named.canonical_name if named else None,
+                        candidate_names=tuple(
+                            gaz.entities[k].canonical_name
+                            for k in result.alternatives
+                            if k in gaz.entities
+                        ),
+                        suggested_target_firm=named.target_firm if named else None,
                         title_raw=title.strip(),
                         seniority=seniority,
                     )

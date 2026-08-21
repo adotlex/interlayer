@@ -233,6 +233,7 @@ def resolve(
                 100.0,
                 f"ambiguous:{colleges[0]}|{firms[0]}",
                 alias=raw,
+                alternatives=(colleges[0], firms[0]),
             )
 
     # 2-3. Negative gazetteer. A veto only fires for an entity that could have

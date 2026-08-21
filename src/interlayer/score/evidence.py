@@ -58,15 +58,20 @@ item rather than dropped, so the evidence contributions still add up to the scor
 class Signal:
     """One evidence item plus where its number should be counted.
 
-    ``firms`` is separate from the item because ``EvidenceItem`` has no firm field
-    and must not grow one on this agent's say-so; it drives ``per_firm``, where
-    Citadel LLC and Citadel Securities are kept apart because they are different
-    companies with different staff.
+    ``per_firm`` is held here rather than on the item because ``EvidenceItem`` has
+    no firm field and must not grow one on this agent's say-so. It is a list of
+    ``(firm, amount)`` because attribution differs by signal: an employment link
+    names exactly one firm, a former colleague may be evidence about two firms at
+    full strength independently, and random-walk proximity is split between firms
+    in proportion to the mass each contributed. Amounts are only ever accumulated
+    per firm, never across firms -- Citadel LLC and Citadel Securities are
+    different companies with different staff, and adding them together would
+    invent a firm that does not exist.
     """
 
     item: EvidenceItem
     bucket: Bucket
-    firms: tuple[TargetFirm, ...] = field(default=())
+    per_firm: tuple[tuple[TargetFirm, float], ...] = field(default=())
 
 
 def damped(weight: float, rank: int) -> float:
@@ -99,11 +104,10 @@ def condense(
         return list(signals)
     head, tail = list(signals[:cap]), list(signals[cap:])
     total = round(sum(s.item.contribution for s in tail), 6)
-    firms: list[TargetFirm] = []
+    rolled: dict[TargetFirm, float] = {}
     for signal in tail:
-        for firm in signal.firms:
-            if firm not in firms:
-                firms.append(firm)
+        for firm, amount in signal.per_firm:
+            rolled[firm] = rolled.get(firm, 0.0) + amount
     template = head[0].item
     head.append(
         Signal(
@@ -114,7 +118,7 @@ def condense(
                 provenance=template.provenance,
             ),
             bucket=head[0].bucket,
-            firms=tuple(sorted(firms)),
+            per_firm=tuple((firm, round(amount, 6)) for firm, amount in sorted(rolled.items())),
         )
     )
     return head

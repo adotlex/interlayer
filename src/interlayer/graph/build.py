@@ -259,6 +259,7 @@ def _summarise(
         "require_cotenure": cfg.require_cotenure,
         "org_pairs_considered": considered,
         "org_pairs_dropped_no_cotenure": projection.pairs_dropped_cotenure,
+        "org_pairs_dropped_zero_affiliation_weight": projection.pairs_dropped_zero_weight,
         "cotenure_drop_rate": (
             round(projection.pairs_dropped_cotenure / considered, 6) if considered else 0.0
         ),

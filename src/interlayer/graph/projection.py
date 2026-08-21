@@ -61,6 +61,7 @@ class Projection:
     n_affiliations: int = 0
     pairs_considered: int = 0
     pairs_dropped_cotenure: int = 0
+    pairs_dropped_zero_weight: int = 0
     invalid_dates: int = 0
 
     @property
@@ -156,7 +157,13 @@ def project(
                             kinds.add(a.affiliation.kind)
                             kinds.add(b.affiliation.kind)
                     if best <= 0.0:
-                        out.pairs_dropped_cotenure += 1
+                        # ``kinds`` is only touched by a stint pair that did
+                        # co-tenure, so it distinguishes "never overlapped" from
+                        # "overlapped but Agent 2 zero-weighted the match".
+                        if kinds:
+                            out.pairs_dropped_zero_weight += 1
+                        else:
+                            out.pairs_dropped_cotenure += 1
                         continue
                     contribution = base * best
                     org_weight += contribution

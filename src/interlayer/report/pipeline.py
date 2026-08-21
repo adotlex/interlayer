@@ -44,7 +44,7 @@ from interlayer.models import (
 from interlayer.report import text
 from interlayer.report.layout import build_layout
 from interlayer.report.redact import Redactor
-from interlayer.report.view import build_context
+from interlayer.report.view import FIRM_LABELS, build_context
 
 __all__ = ["assert_self_contained", "run"]
 
@@ -157,7 +157,15 @@ def run(cfg: Settings) -> None:
     scored_people.sort(key=lambda p: p.person_id)
     scored_clusters.sort(key=lambda c: c.cluster_id)
 
-    redactor = Redactor(cfg, people)
+    # Curated gazetteer firm names are organisation names, not personal data,
+    # and must survive the name scrubber intact even when a connection happens
+    # to be surnamed Street. Only names this repository curated are exempt --
+    # employer strings that came in from the export never are.
+    redactor = Redactor(
+        cfg,
+        people,
+        safe_phrases=sorted({o.name for o in orgs if o.is_target} | set(FIRM_LABELS.values())),
+    )
 
     inputs_sha = _inputs_digest(
         [
