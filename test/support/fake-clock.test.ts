@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasCode } from '../../src/core/errors.ts';
+import { hasCode, type TimeoutError } from '../../src/core/errors.ts';
 import { createFakeClock, createFakeRuntime } from './fake-clock.ts';
 import { scriptedRandom } from './seeded-random.ts';
 
@@ -102,7 +102,13 @@ describe('fake runtime', () => {
     expect(d.signal.aborted).toBe(false);
     await rt.advance(1);
     expect(d.signal.aborted).toBe(true);
-    expect(hasCode(d.signal.reason, 'CANCELLED')).toBe(true);
+    // A deadline breach is a TIMEOUT, not a CANCELLED — caller-abort and
+    // timeout-abort must stay distinguishable (R4 §2.3). The system runtime
+    // aborts with exactly the same error; a fake that disagreed would certify
+    // the wrong behaviour.
+    expect(hasCode(d.signal.reason, 'TIMEOUT')).toBe(true);
+    expect((d.signal.reason as TimeoutError).scope).toBe('call');
+    expect((d.signal.reason as TimeoutError).timeoutMs).toBe(500);
 
     const d2 = rt.deadline(500);
     expect(rt.pendingTimers).toBe(1);

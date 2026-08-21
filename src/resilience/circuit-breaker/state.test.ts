@@ -387,16 +387,27 @@ describe('breaker reducer — generation counter', () => {
 });
 
 describe('breaker reducer — consecutive mode', () => {
-  it('trips after minimumThroughput consecutive failures', () => {
-    walk({ mode: 'consecutive', minimumThroughput: 3 }, [
+  it('trips after consecutiveFailureThreshold consecutive failures', () => {
+    walk({ mode: 'consecutive', consecutiveFailureThreshold: 3 }, [
       { event: { type: 'failure' }, state: 'closed' },
       { event: { type: 'failure' }, state: 'closed' },
       { event: { type: 'failure' }, state: 'open' },
     ]);
   });
 
+  it('consecutive mode ignores minimumThroughput entirely', () => {
+    // It used to double as the threshold, so raising the ratio mode's volume
+    // guard silently raised the consecutive mode's trip count with it. The two
+    // knobs are now independent: threshold 2 trips on the 2nd failure whatever
+    // `minimumThroughput` says.
+    walk({ mode: 'consecutive', consecutiveFailureThreshold: 2, minimumThroughput: 50 }, [
+      { event: { type: 'failure' }, state: 'closed' },
+      { event: { type: 'failure' }, state: 'open' },
+    ]);
+  });
+
   it('a single success resets the consecutive run', () => {
-    const data = walk({ mode: 'consecutive', minimumThroughput: 3 }, [
+    const data = walk({ mode: 'consecutive', consecutiveFailureThreshold: 3 }, [
       { event: { type: 'failure' }, state: 'closed' },
       { event: { type: 'failure' }, state: 'closed' },
       { event: { type: 'success' }, state: 'closed' },
@@ -426,6 +437,7 @@ describe('option resolution', () => {
       mode: 'ratio',
       failureRatio: 0.5,
       minimumThroughput: 10,
+      consecutiveFailureThreshold: 5,
       windowMs: 30_000,
       bucketMs: 1_000,
       resetMs: 10_000,
@@ -453,6 +465,7 @@ describe('option resolution', () => {
       mode: 'ratio',
       failureRatio: 0.5,
       minimumThroughput: 1,
+      consecutiveFailureThreshold: 5,
       windowMs: 30_000,
       bucketMs: 1_000,
       resetMs: 10_000,

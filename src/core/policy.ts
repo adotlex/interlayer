@@ -220,13 +220,25 @@ export type BreakerMode = 'ratio' | 'consecutive';
 
 export interface BreakerOptions {
   readonly mode?: BreakerMode | undefined;
-  /** Trips at >= this failure ratio within the window. */
+  /** `mode: 'ratio'` only. Trips at >= this failure ratio within the window. */
   readonly failureRatio?: number | undefined;
   /**
-   * Floor of 2. Guards against tripping on a single request — evaluate the trip
-   * condition after EVERY outcome, not only failures (R4 CB-6).
+   * `mode: 'ratio'` only. Floor of 2. Guards against tripping on a single
+   * request — evaluate the trip condition after EVERY outcome, not only
+   * failures (R4 CB-6).
    */
   readonly minimumThroughput?: number | undefined;
+  /**
+   * `mode: 'consecutive'` only. Trips after this many failures IN A ROW; any
+   * success resets the count. Default 5.
+   *
+   * Its own field because `minimumThroughput` used to double as this threshold,
+   * which silently coupled two unrelated numbers: raising the ratio mode's
+   * volume guard from 10 to 100 also demanded 100 consecutive failures before a
+   * consecutive-mode breaker would trip. The two modes now share nothing but
+   * the window bookkeeping.
+   */
+  readonly consecutiveFailureThreshold?: number | undefined;
   readonly windowMs?: number | undefined;
   /** Bucket granularity; `windowMs / bucketMs` buckets bounds the memory. */
   readonly bucketMs?: number | undefined;
@@ -234,7 +246,20 @@ export interface BreakerOptions {
   readonly resetMs?: number | undefined;
   readonly halfOpenMaxConcurrent?: number | undefined;
   readonly halfOpenSuccessesToClose?: number | undefined;
-  /** Errors for which this predicate returns false are not counted at all. */
+  /**
+   * Decides which errors count against the breaker. Default: every error does.
+   *
+   * An error this returns `false` for is recorded as a SUCCESS and rethrown
+   * unchanged — R4 §3.7 / CB-20, and what the breaker actually implements. (The
+   * doc here once said "not counted at all"; it was the comment that was wrong,
+   * not the code.) The point is that a caller's own bad input — an HTTP 404,
+   * a validation failure — must not be evidence that the provider is unhealthy,
+   * and in a ratio breaker "no evidence" would still shift the ratio unless the
+   * call lands on the healthy side of it.
+   *
+   * A `CancelledError` never reaches this predicate: the breaker discards
+   * caller-cancelled outcomes entirely rather than scoring them either way.
+   */
   readonly isFailure?: ((error: unknown) => boolean) | undefined;
 }
 
@@ -286,6 +311,7 @@ export const DEFAULTS = {
     mode: 'ratio' as const, // 'ratio' | 'consecutive'          (R4 §3.2)
     failureRatio: 0.5, // trips at >= 50%
     minimumThroughput: 10, // floor 2; guards against tripping on 1 request
+    consecutiveFailureThreshold: 5, // mode 'consecutive' only; its own knob
     windowMs: 30_000,
     bucketMs: 1_000, // => 30 buckets; bounds memory      (R4 §3.2)
     resetMs: 10_000, // OPEN -> HALF_OPEN cooldown, lazy  (R4 §3.1)
@@ -329,6 +355,7 @@ export interface ResolvedBreakerOptions {
   readonly mode: BreakerMode;
   readonly failureRatio: number;
   readonly minimumThroughput: number;
+  readonly consecutiveFailureThreshold: number;
   readonly windowMs: number;
   readonly bucketMs: number;
   readonly resetMs: number;

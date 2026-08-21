@@ -28,7 +28,7 @@ import {
   NoProviderError,
   toInterlayerError,
 } from '../core/errors.ts';
-import type { AnyInterlayerError, CallContext, ProviderRecord } from '../core/types.ts';
+import type { AnyInterlayerError, CallContext, ErrorCode, ProviderRecord } from '../core/types.ts';
 
 /** Decides whether the chain should advance to the next candidate. */
 export type ShouldFallback = (error: AnyInterlayerError, ctx: CallContext) => boolean;
@@ -53,19 +53,47 @@ export function isCancellation(error: AnyInterlayerError): boolean {
 }
 
 /**
+ * Codes for which a DIFFERENT provider is demonstrably futile.
+ *
+ * Everything absent from this set falls back, including `PROVIDER_ERROR`.
+ */
+const NO_FALLBACK_CODES: ReadonlySet<ErrorCode> = new Set<ErrorCode>([
+  // The caller withdrew. "Try harder" is the wrong answer to that.
+  'CANCELLED',
+  // The input or the configuration is wrong, so every provider rejects it
+  // identically. Walking the chain just multiplies one caller mistake.
+  'VALIDATION',
+  'CONFIG',
+  // Nothing left to advance to, or already the aggregate of having tried.
+  'NO_PROVIDER',
+  'ALL_FAILED',
+]);
+
+/**
  * The default policy: fall back exactly when a DIFFERENT provider could
  * plausibly do better.
  *
- * `error.retryable` already encodes that for the whole taxonomy (transport,
- * attempt timeout, rate limited and open-circuit are retryable; validation,
- * config and cancellation are not). The two explicit guards exist because a
- * cancelled call must never march through the remaining providers — the caller
- * asked us to stop, and "try harder" is the wrong answer to that.
+ * This deliberately does NOT key off `error.retryable`, because the two answer
+ * different questions. `retryable` asks "should I call the SAME provider
+ * again?", and for an unclassified provider throw the answer is no — a
+ * deterministic bug would fail identically, so retrying only burns the budget
+ * (R4 §1.3 rule 8). Whether a *different* provider could succeed is unrelated:
+ * provider A's bug says nothing about provider B.
+ *
+ * Keying fallback off `retryable` conflated them, and the cost was severe: a
+ * handler doing the most ordinary thing in the world — `throw new Error(...)` —
+ * became a non-retryable `PROVIDER_ERROR` and never advanced the chain at all.
+ * Two healthy alternates would sit unused while the call failed with the first
+ * provider's error. That is precisely the scenario a fallback chain exists for.
+ *
+ * So the rule is inverted: advance unless a different provider is futile.
+ * Unknown and future codes fall back, because an unnecessary hop costs one
+ * wasted call while a missed hop costs an outage.
  */
 export function defaultShouldFallback(error: AnyInterlayerError, ctx: CallContext): boolean {
   if (isCancellation(error)) return false;
   if (ctx.signal.aborted) return false;
-  return error.retryable;
+  return !NO_FALLBACK_CODES.has(error.code);
 }
 
 /**

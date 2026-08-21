@@ -174,14 +174,29 @@ export class CircuitOpenError extends InterlayerError {
   readonly key: string;
   readonly openedAt: number;
   readonly halfOpenAt: number;
-  /** How long until the breaker will admit a probe. Convenience for callers. */
+  /**
+   * How long from NOW until the breaker will admit a probe — a usable
+   * `Retry-After`. `undefined` once the cooldown has already elapsed.
+   *
+   * This is `halfOpenAt − now`, and `now` is a required constructor argument for
+   * exactly that reason. It was once `halfOpenAt − openedAt`, which is the
+   * CONFIGURED `resetMs` and never changes as time passes: a caller five seconds
+   * into a ten-second cooldown was told to wait ten more. There is no clock in
+   * this file (and there must not be), so the thrower supplies the instant.
+   */
   readonly retryAfterMs: number | undefined;
-  constructor(key: string, openedAt: number, halfOpenAt: number, ctx: ErrorContext = {}) {
+  constructor(
+    key: string,
+    openedAt: number,
+    halfOpenAt: number,
+    now: number,
+    ctx: ErrorContext = {},
+  ) {
     super(`Circuit "${key}" is open`, { ...ctx, details: { ...ctx.details, key } }, true);
     this.key = key;
     this.openedAt = openedAt;
     this.halfOpenAt = halfOpenAt;
-    this.retryAfterMs = halfOpenAt > openedAt ? halfOpenAt - openedAt : undefined;
+    this.retryAfterMs = halfOpenAt > now ? halfOpenAt - now : undefined;
   }
 }
 
@@ -200,6 +215,47 @@ export class ProviderError extends InterlayerError {
     super(message, ctx, ctx.retryable ?? isRetryableStatus(status));
     this.status = status;
   }
+}
+
+/**
+ * Every configured attempt against ONE provider failed — R4 §1.6.
+ *
+ * Thrown by the retry policy ONLY when it actually made two or more attempts.
+ * A single failure is rethrown unwrapped, because `maxAttempts: 1` must behave
+ * exactly like no retry wrapper at all and because wrapping one error buries it.
+ *
+ * `retryable` is INHERITED FROM THE LAST FAILURE rather than defaulted. The
+ * routing layer above decides whether to try another provider by reading
+ * `error.retryable`; if this wrapper answered for itself, exhausting the retries
+ * against a transiently-broken provider would silently stop the fallback chain.
+ *
+ * `cause` is the last error (Node's default error printing follows it) and
+ * `errors` is every one of them in order — the first failure is frequently the
+ * diagnostic one and the later ones are `ECONNREFUSED` from a now-dead process.
+ */
+export class RetryExhaustedError extends InterlayerError {
+  readonly code = 'RETRY_EXHAUSTED' as const;
+  /** Physical invocations made. Always `>= 2`; a single failure is not wrapped. */
+  readonly attempts: number;
+  /** Every failure, chronologically. `.at(-1)` is also `.cause`. */
+  readonly errors: readonly unknown[];
+  constructor(attempts: number, errors: readonly unknown[], ctx: ErrorContext = {}) {
+    const last = errors.at(-1);
+    super(
+      `All ${attempts} attempt(s) failed${
+        last instanceof Error ? `; last: ${last.name}: ${last.message}` : ''
+      }`,
+      { ...ctx, cause: ctx.cause ?? last, retryable: ctx.retryable ?? retryableOf(last) },
+      false,
+    );
+    this.attempts = attempts;
+    this.errors = errors;
+  }
+}
+
+/** Whether a *different* provider could plausibly do better than this error did. */
+function retryableOf(error: unknown): boolean {
+  return isInterlayerError(error) ? error.retryable : false;
 }
 
 /**
@@ -241,6 +297,7 @@ export type AnyInterlayerError =
   | CircuitOpenError
   | BulkheadFullError
   | ProviderError
+  | RetryExhaustedError
   | AllProvidersFailedError;
 
 /* ---------- Guards & normalisation ---------- */

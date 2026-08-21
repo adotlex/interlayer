@@ -24,10 +24,10 @@ import type {
   AnyContract,
   Contract,
   Handlers,
-  Provider,
   ProviderRecord,
   ProviderTraits,
   RegisterOptions,
+  Registrable,
   Registry,
 } from '../core/types.ts';
 import { capabilityNames } from './capability.ts';
@@ -102,8 +102,14 @@ export function createRegistry<C extends Contract<C> = AnyContract>(
   }
 
   const registry: Registry<C> = {
+    /**
+     * Accepts a typed `Provider` OR an already-erased `ProviderRecord` (see
+     * `Registrable` in core). Either way the capability map is rebuilt from the
+     * runtime value, so the two paths cannot diverge — the wider signature buys
+     * a test double that needs no cast, not a weaker check.
+     */
     register<Id extends string, H extends Partial<Handlers<C>>>(
-      provider: Provider<C, Id, H>,
+      provider: Registrable<C, Id, H>,
       opts: RegisterOptions = {},
     ) {
       if (disposed) {
@@ -114,8 +120,9 @@ export function createRegistry<C extends Contract<C> = AnyContract>(
           `register() expects a provider object (got ${provider === null ? 'null' : typeof provider})`,
         );
       }
-      // `Provider` is structurally a `ProviderLike`; the erasure reads the
-      // runtime value from here on and ignores the static type entirely.
+      // Both `Provider` and `ProviderRecord` are structurally `ProviderLike`;
+      // the erasure reads the runtime value from here on and ignores the static
+      // type entirely.
       const like: ProviderLike = provider;
       if (entries.has(like.id)) {
         throw new ConfigError(

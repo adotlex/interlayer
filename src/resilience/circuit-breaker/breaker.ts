@@ -22,7 +22,7 @@
  * nothing to cancel.
  */
 
-import { CircuitOpenError } from '../../core/errors.ts';
+import { CircuitOpenError, hasCode } from '../../core/errors.ts';
 import {
   type BreakerOptions,
   definePolicy,
@@ -46,11 +46,38 @@ import {
  * Counts every error as a failure — R4 §5.3 verbatim.
  *
  * `CircuitOpenError` is never seen by this predicate: a rejected call never ran,
- * so there is nothing to record (CB-25). Callers who want HTTP 404s and other
- * caller-fault errors excluded pass their own `isFailure`; an excluded error is
- * recorded as a SUCCESS and still rethrown (R4 §3.7, CB-20).
+ * so there is nothing to record (CB-25). Neither is `CancelledError` — see
+ * {@link isUnscored}. Callers who want HTTP 404s and other caller-fault errors
+ * excluded pass their own `isFailure`; an excluded error is recorded as a
+ * SUCCESS and still rethrown (R4 §3.7, CB-20).
  */
 export const DEFAULT_IS_FAILURE: (error: unknown) => boolean = () => true;
+
+/**
+ * Outcomes the breaker scores NEITHER WAY, checked before `isFailure`.
+ *
+ * A `CancelledError` means the caller withdrew — they hung up, their own
+ * deadline passed, a sibling in a race won. That is the caller's decision and
+ * says nothing about the provider's health, so it must not trip a breaker
+ * against that provider: a burst of client-side cancellations (a user
+ * navigating away, an upstream timeout storm) would otherwise take a perfectly
+ * healthy provider out of service for the whole `resetMs` cooldown.
+ *
+ * Scoring it as a SUCCESS instead — which is what routing it through a custom
+ * `isFailure` would do — is the opposite error: a provider so slow that every
+ * caller gives up would read as 100 % healthy. Neither, therefore: the outcome
+ * is discarded and the half-open slot released ({@link BreakerEvent} `'ignore'`).
+ *
+ * A `TimeoutError` is deliberately NOT in this set. Our own attempt timeout
+ * firing IS evidence about the provider, and it is exactly the evidence a
+ * breaker exists to accumulate.
+ *
+ * Not configurable, because the alternative is not a preference: no correct
+ * breaker counts a caller's own withdrawal against a backend.
+ */
+function isUnscored(error: unknown): boolean {
+  return hasCode(error, 'CANCELLED');
+}
 
 /**
  * Rolling time-window failure-ratio breaker with a minimum-throughput guard.
@@ -101,12 +128,20 @@ export const circuitBreaker: PolicyFactory<BreakerOptions> = (
     const observed = apply(key, { type: 'tick' }, startedAt, ctx);
     if (!canAdmit(observed, startedAt, resolved)) {
       // Fail fast without invoking the operation at all (CB-7).
-      throw new CircuitOpenError(key, observed.openedAt, halfOpenAt(observed, resolved), {
-        providerId: key,
-        capability: ctx.capability,
-        callId: ctx.callId,
-        attempt: ctx.attempt,
-      });
+      throw new CircuitOpenError(
+        key,
+        observed.openedAt,
+        halfOpenAt(observed, resolved),
+        // `retryAfterMs` is `halfOpenAt - now`, so the instant has to travel
+        // with it; the error class has no clock and must never grow one.
+        startedAt,
+        {
+          providerId: key,
+          capability: ctx.capability,
+          callId: ctx.callId,
+          attempt: ctx.attempt,
+        },
+      );
     }
     const admitted = apply(key, { type: 'admit' }, startedAt, ctx);
     const generation = admitted.generation;
@@ -117,9 +152,15 @@ export const circuitBreaker: PolicyFactory<BreakerOptions> = (
       apply(key, { type: 'success', generation }, ctx.runtime.now(), ctx);
       return value;
     } catch (error) {
-      // An error the predicate excludes is recorded as a success and rethrown
-      // unchanged: a breaker must not trip on the caller's own bad input.
-      const type = isFailure(error) ? 'failure' : 'success';
+      // A caller-cancelled attempt is discarded outright — neither a failure nor
+      // a success, but the half-open slot is still released. Everything else:
+      // an error the predicate excludes is recorded as a success and rethrown
+      // unchanged, because a breaker must not trip on the caller's own bad input.
+      const type: BreakerEvent['type'] = isUnscored(error)
+        ? 'ignore'
+        : isFailure(error)
+          ? 'failure'
+          : 'success';
       apply(key, { type, generation }, ctx.runtime.now(), ctx);
       throw error;
     }

@@ -90,6 +90,14 @@ export type BreakerEvent =
   | { readonly type: 'admit' }
   | { readonly type: 'success'; readonly generation?: number | undefined }
   | { readonly type: 'failure'; readonly generation?: number | undefined }
+  /**
+   * The call settled but its outcome is NO EVIDENCE about the provider — a
+   * caller-cancelled attempt. Releases the half-open trial slot it was holding
+   * and records nothing in the window; it is neither a success nor a failure.
+   * A third event rather than a third `isFailure` return value, because the slot
+   * MUST be released either way and forgetting to do that deadlocks half-open.
+   */
+  | { readonly type: 'ignore'; readonly generation?: number | undefined }
   | { readonly type: 'trip' }
   | { readonly type: 'reset' };
 
@@ -136,6 +144,8 @@ export function resolveBreakerOptions(options: BreakerOptions = {}): ResolvedBre
     mode: options.mode ?? d.mode,
     failureRatio: options.failureRatio ?? d.failureRatio,
     minimumThroughput: options.minimumThroughput ?? d.minimumThroughput,
+    consecutiveFailureThreshold:
+      options.consecutiveFailureThreshold ?? d.consecutiveFailureThreshold,
     windowMs: options.windowMs ?? d.windowMs,
     bucketMs: options.bucketMs ?? d.bucketMs,
     resetMs: options.resetMs ?? d.resetMs,
@@ -157,6 +167,12 @@ export function resolveBreakerOptions(options: BreakerOptions = {}): ResolvedBre
   // most common circuit-breaker misconfiguration (R4 §3.2).
   require(Number.isInteger(resolved.minimumThroughput) &&
     resolved.minimumThroughput >= 2, 'minimumThroughput', 'must be an integer >= 2');
+  // No floor of 2 here: `consecutiveFailureThreshold: 1` ("trip on the first
+  // failure") is a coherent, deliberate configuration in consecutive mode,
+  // unlike the ratio mode's accidental 1/1 = 100 % trip that the floor guards.
+  require(Number.isInteger(resolved.consecutiveFailureThreshold) &&
+    resolved.consecutiveFailureThreshold >=
+      1, 'consecutiveFailureThreshold', 'must be an integer >= 1');
   require(resolved.windowMs > 0, 'windowMs', 'must be > 0');
   require(resolved.bucketMs > 0, 'bucketMs', 'must be > 0');
   require(resolved.bucketMs <= resolved.windowMs, 'bucketMs', 'must be <= windowMs');
@@ -255,6 +271,8 @@ export function reduceBreaker(
       return settle(state, event.generation, now, options, true);
     case 'failure':
       return settle(state, event.generation, now, options, false);
+    case 'ignore':
+      return discard(state, event.generation);
     case 'trip':
       return open(state, now);
     case 'reset':
@@ -279,6 +297,20 @@ function admit(state: BreakerData, now: number, options: ResolvedBreakerOptions)
   if (ticked.state !== 'half-open') return ticked;
   if (ticked.halfOpenInFlight >= options.halfOpenMaxConcurrent) return ticked;
   return { ...ticked, halfOpenInFlight: ticked.halfOpenInFlight + 1 };
+}
+
+/**
+ * Releases a half-open trial slot without recording an outcome.
+ *
+ * Same staleness guard as {@link settle}: a settlement whose generation has
+ * moved on describes a machine that no longer exists, and decrementing the new
+ * generation's in-flight counter would hand out a trial slot that was never
+ * taken.
+ */
+function discard(state: BreakerData, generation: number | undefined): BreakerData {
+  if (generation !== undefined && generation !== state.generation) return state;
+  if (state.state !== 'half-open') return state;
+  return { ...state, halfOpenInFlight: Math.max(0, state.halfOpenInFlight - 1) };
 }
 
 function settle(
@@ -321,9 +353,11 @@ function settle(
 /** The trip condition. Runs after every recorded outcome — see the file header. */
 function evaluate(state: BreakerData, now: number, options: ResolvedBreakerOptions): BreakerData {
   if (options.mode === 'consecutive') {
-    // `BreakerOptions` carries no dedicated N for this mode, so
-    // `minimumThroughput` doubles as the consecutive-failure threshold.
-    return state.consecutiveFailures >= options.minimumThroughput ? open(state, now) : state;
+    // Its own threshold. `minimumThroughput` used to stand in for it, which tied
+    // the ratio mode's volume guard to the consecutive mode's trip count.
+    return state.consecutiveFailures >= options.consecutiveFailureThreshold
+      ? open(state, now)
+      : state;
   }
   const { failures, total } = windowTotals(state, now, options);
   // The minimum-throughput guard is the whole point and is not optional.

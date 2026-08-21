@@ -3,9 +3,13 @@ import { fakeProvider, testContext } from '../../test/support/index.ts';
 import {
   AllProvidersFailedError,
   CancelledError,
+  CircuitOpenError,
+  ConfigError,
   hasCode,
   RateLimitedError,
+  TimeoutError,
   TransportError,
+  toInterlayerError,
   ValidationError,
 } from '../core/errors.ts';
 import type { AnyInterlayerError, CallContext, ProviderRecord } from '../core/types.ts';
@@ -344,5 +348,38 @@ describe('runFallbackChain — maxProviders', () => {
     expect(hasCode(thrown, 'TRANSPORT')).toBe(true);
     expect(s.entered).toEqual(['a']);
     expect(h.emitted('fallback:advance')).toHaveLength(0);
+  });
+});
+
+describe('defaultShouldFallback — plain throws must advance the chain', () => {
+  const ctx = (): CallContext => testContext().call;
+
+  it('falls back on a bare `throw new Error()` from a provider', () => {
+    // The regression this file exists for: an unclassified provider throw
+    // becomes a non-retryable PROVIDER_ERROR. Keying fallback off `retryable`
+    // stranded the call on provider A while healthy alternates sat unused.
+    const err = toInterlayerError(new Error('boom'), {
+      providerId: 'a',
+      capability: 'chat',
+      callId: 'c1',
+    });
+    expect(err.code).toBe('PROVIDER_ERROR');
+    expect(err.retryable).toBe(false);
+    expect(defaultShouldFallback(err, ctx())).toBe(true);
+  });
+
+  it.each([
+    ['TIMEOUT', new TimeoutError(10, 'attempt')],
+    ['RATE_LIMITED', new RateLimitedError('limited', 5)],
+    ['CIRCUIT_OPEN', new CircuitOpenError('a', 0, 1000, 0)],
+  ] as const)('falls back on %s', (_code, err) => {
+    expect(defaultShouldFallback(err as AnyInterlayerError, ctx())).toBe(true);
+  });
+
+  it.each([
+    ['CANCELLED', new CancelledError('caller stopped')],
+    ['CONFIG', new ConfigError('bad options')],
+  ] as const)('does NOT fall back on %s — a different provider is futile', (_code, err) => {
+    expect(defaultShouldFallback(err as AnyInterlayerError, ctx())).toBe(false);
   });
 });

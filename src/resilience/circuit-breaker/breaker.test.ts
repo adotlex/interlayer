@@ -10,7 +10,14 @@
 import { describe, expect, it } from 'vitest';
 import { type FakeRuntime, fakeProvider, testContext } from '../../../test/support/index.ts';
 import { pipeline } from '../../core/compose.ts';
-import { CircuitOpenError, ConfigError, hasCode, TransportError } from '../../core/errors.ts';
+import {
+  CancelledError,
+  CircuitOpenError,
+  ConfigError,
+  hasCode,
+  TimeoutError,
+  TransportError,
+} from '../../core/errors.ts';
 import { type BreakerOptions, POLICY_SCOPE, type Policy } from '../../core/policy.ts';
 import type { AttemptContext, BreakerState } from '../../core/types.ts';
 import { circuitBreaker, DEFAULT_IS_FAILURE } from './breaker.ts';
@@ -93,6 +100,65 @@ async function drive(h: Harness, script: string): Promise<void> {
 const OPEN_AFTER_TWO: BreakerOptions = { minimumThroughput: 2, failureRatio: 0.5, resetMs: 10_000 };
 
 /* ------------------------------------------------------------------ *
+ * A caller's own cancellation is not evidence about the provider
+ * ------------------------------------------------------------------ */
+
+describe('circuit breaker policy — cancellation is scored NEITHER way', () => {
+  it('a CancelledError never trips the breaker, however many arrive', async () => {
+    const h = harness({ minimumThroughput: 2, failureRatio: 0.5 });
+    for (let i = 0; i < 10; i++) {
+      await h.fail(new CancelledError('caller hung up')).catch(() => undefined);
+    }
+    // The default `isFailure` counts every error, so before the carve-out this
+    // was ten failures and an open circuit: a burst of client cancellations
+    // took a perfectly healthy provider out of service.
+    expect(h.view()?.state ?? 'closed').toBe('closed');
+  });
+
+  it('and is not laundered into a SUCCESS either', async () => {
+    // Scoring it as a success is the opposite error: a provider so slow that
+    // every caller gives up would read as 100 % healthy. It is recorded as
+    // nothing at all, so the window stays empty.
+    const h = harness({ minimumThroughput: 2, failureRatio: 0.5 });
+    await h.fail(new CancelledError('gave up')).catch(() => undefined);
+    expect(h.view()?.bucketCount ?? 0).toBe(0);
+
+    // One real failure plus one cancellation must not read as 50 % of two.
+    await h.fail().catch(() => undefined);
+    expect(h.view()?.state).toBe('closed');
+  });
+
+  it('rethrows the cancellation unchanged', async () => {
+    const h = harness();
+    const cancelled = new CancelledError('stop');
+    await expect(h.fail(cancelled)).rejects.toBe(cancelled);
+  });
+
+  it('still releases the half-open trial slot it was holding', async () => {
+    const h = harness(OPEN_AFTER_TWO);
+    await drive(h, 'FF');
+    await h.runtime.advance(10_000);
+
+    // The probe is admitted, then the caller cancels it. If the slot were not
+    // released, half-open would be deadlocked at `halfOpenMaxConcurrent: 1` and
+    // the breaker could never close again.
+    await h.fail(new CancelledError('probe cancelled')).catch(() => undefined);
+    expect(h.view()?.state).toBe('half-open');
+    expect(h.view()?.halfOpenInFlight).toBe(0);
+
+    await h.succeed();
+    expect(h.view()?.state).toBe('closed');
+  });
+
+  it('a TimeoutError is still a failure — that IS evidence about the provider', async () => {
+    const h = harness({ minimumThroughput: 2, failureRatio: 0.5 });
+    await h.fail(new TimeoutError(10, 'attempt')).catch(() => undefined);
+    await h.fail(new TimeoutError(10, 'attempt')).catch(() => undefined);
+    expect(h.view()?.state).toBe('open');
+  });
+});
+
+/* ------------------------------------------------------------------ *
  * Pass-through and fail-fast
  * ------------------------------------------------------------------ */
 
@@ -154,6 +220,23 @@ describe('circuit breaker policy — open', () => {
     expect(open.retryAfterMs).toBe(10_000);
     expect(open.retryable, 'a different provider may well work').toBe(true);
     expect(h.invoked(), 'the operation was never entered').toBe(before);
+  });
+
+  it('retryAfterMs counts down as the cooldown elapses', async () => {
+    const h = harness(OPEN_AFTER_TWO);
+    await drive(h, 'FF');
+    expect(h.view()?.openedAt).toBe(0);
+
+    await h.runtime.advance(4_000);
+    const midway = (await h.succeed().catch((e: unknown) => e)) as CircuitOpenError;
+    // `halfOpenAt - now`, not `halfOpenAt - openedAt`. The old form always
+    // answered the configured resetMs, whatever the clock said.
+    expect(midway.retryAfterMs).toBe(6_000);
+    expect(midway.halfOpenAt).toBe(10_000);
+
+    await h.runtime.advance(5_999);
+    const nearlyDone = (await h.succeed().catch((e: unknown) => e)) as CircuitOpenError;
+    expect(nearlyDone.retryAfterMs).toBe(1);
   });
 
   it('CB-25: rejections are not recorded as outcomes', async () => {

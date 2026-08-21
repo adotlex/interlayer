@@ -89,7 +89,19 @@ export interface Runtime extends Clock {
   random: Random;
   /** Correlation id for a call. The ONLY source of identity. */
   uuid(): string;
-  /** Signal that aborts after `ms`, linked to `parent`. `dispose` MUST be called. */
+  /**
+   * Signal that aborts after `ms`, linked to `parent`. `dispose` MUST be called.
+   *
+   * THE ABORT REASON IS A `TimeoutError` WITH `scope: 'call'`, never a
+   * `CancelledError` (R4 §2.3): a deadline breach and a caller abort must stay
+   * distinguishable all the way out to `err.code`. When `parent` aborts first,
+   * the parent's own reason propagates by identity instead.
+   *
+   * The timer HOLDS THE EVENT LOOP OPEN. A resilience library whose deadline can
+   * be skipped because the process had nothing else to do is not a resilience
+   * library; `dispose()` — which every caller must run in a `finally` — is what
+   * releases it.
+   */
   deadline(ms: number, parent?: AbortSignal): DeadlineHandle;
 }
 
@@ -219,6 +231,8 @@ export type ErrorCode =
   | 'CIRCUIT_OPEN'
   | 'BULKHEAD_FULL'
   | 'PROVIDER_ERROR'
+  /** Every configured attempt against ONE provider failed (R4 §1.6). */
+  | 'RETRY_EXHAUSTED'
   | 'ALL_FAILED';
 
 export interface ErrorContext {
@@ -286,8 +300,28 @@ export interface AttemptContext extends CallContext {
  * (R1 §5.2 / R6 pitfall 13).
  */
 export interface CallOptions {
+  /**
+   * RELATIVE budget for the whole call, in milliseconds from the moment
+   * `call()` is entered. Overrides the layer's configured `totalTimeoutMs`.
+   */
   readonly timeoutMs?: number | undefined;
-  readonly deadlineMs?: number | undefined;
+  /**
+   * ABSOLUTE instant the call must not run past, on the same epoch-millisecond
+   * scale as `Runtime.now()` — NOT a duration.
+   *
+   * `timeoutMs` and `deadlineAt` are the two halves of one idea and the TIGHTER
+   * of them wins. Use `deadlineAt` when the budget is inherited (an incoming
+   * request's own deadline, a batch cut-off) and `timeoutMs` when it is local.
+   *
+   * Named `deadlineAt`, not `deadlineMs`: every `…At` in this library is an
+   * absolute instant and every `…Ms` is a duration, and the old name read as a
+   * duration while meaning an instant. It lands on `CallContext.deadlineAt`,
+   * where the retry budget, the attempt timeout and the total timeout all read
+   * it. The facade arms it directly, so it is enforced even with every
+   * resilience policy switched off; a `deadlineAt` already in the past fails the
+   * call immediately with `TIMEOUT`, without entering a provider.
+   */
+  readonly deadlineAt?: number | undefined;
   readonly signal?: AbortSignal | undefined;
   /** Restrict candidates to these provider ids, in this order. */
   readonly providers?: readonly string[] | undefined;
@@ -381,9 +415,31 @@ export interface RegisterOptions {
   readonly traits?: ProviderTraits | undefined;
 }
 
+/**
+ * What {@link Registry.register} accepts.
+ *
+ * A typed `Provider` is the normal case. An already-erased `ProviderRecord` is
+ * the second member because that is what a hand-built double produces (and what
+ * `test/support/fake-provider.ts` hands back), and because `ProviderRecord` is
+ * NOT structurally assignable to `Provider`: `Partial<Handlers<C>>` is a weak
+ * type — every property optional — so TypeScript rejects a
+ * `ReadonlyMap<string, ErasedHandler>` for having no properties in common with
+ * it. Without this union every such call site needs `as unknown as Provider<C>`,
+ * and a cast in a test harness is a cast that can hide a real mismatch.
+ *
+ * `register` derives the capability map from the runtime VALUE either way, so
+ * the union widens what type-checks without widening what is accepted at
+ * runtime.
+ */
+export type Registrable<
+  C extends Contract<C>,
+  Id extends string = string,
+  H extends Partial<Handlers<C>> = Partial<Handlers<C>>,
+> = Provider<C, Id, H> | ProviderRecord;
+
 export interface Registry<C extends Contract<C>> {
   register<Id extends string, H extends Partial<Handlers<C>>>(
-    provider: Provider<C, Id, H>,
+    provider: Registrable<C, Id, H>,
     opts?: RegisterOptions,
   ): this;
   unregister(providerId: string): boolean;
@@ -462,7 +518,18 @@ export type Infer<V> = V extends Validator<infer T> ? T : never;
 /** What `callWithMeta` returns: the value plus what actually happened. */
 export interface CallResult<T> {
   readonly value: T;
+  /** Id of the provider that produced `value`. */
   readonly providerId: string;
+  /**
+   * ALIAS of {@link CallResult.providerId}, same string.
+   *
+   * R6 §5.2's acceptance example destructures `{ value, provider, attempts,
+   * durationMs, errors }`, while the settled reconciliation (guide §2) chose
+   * `id`/`providerId` over R6's `name`/`provider` everywhere else. Both names
+   * are carried here so the published example compiles verbatim. ONE OF THESE
+   * TWO SHOULD BE DROPPED BEFORE 1.0 — see the integration report.
+   */
+  readonly provider: string;
   readonly attempts: number;
   readonly durationMs: number;
   /** Every suppressed failure, in order. A fallback never swallows a cause. */
@@ -477,11 +544,17 @@ export interface Layer<
   C extends Contract<C>,
   Ids extends string = string,
   Impl extends CapabilityName<C> = CapabilityName<C>,
-> {
+> extends AsyncDisposable {
   readonly contract: C;
   readonly registry: Registry<C>;
   readonly events: Emitter<InterlayerEvents>;
   readonly runtime: Runtime;
+  /**
+   * The providers this layer will consider, in candidate order — read-only
+   * introspection for tooling and tests (R6 §5.3). On a layer narrowed by
+   * `only(...)` it lists the pinned subset, in the pinned order.
+   */
+  readonly providers: readonly ProviderRecord[];
 
   /** Throwing form. Rejects with an `InterlayerError` subclass, always. */
   call<K extends Impl>(
@@ -513,5 +586,6 @@ export interface Layer<
     fn: (payload: InterlayerEvents[K]) => void,
   ): Unsubscribe;
   use(middleware: CallMiddleware): this;
+  /** Releases every provider, policy and listener. Idempotent. */
   close(): Promise<void>;
 }

@@ -27,7 +27,7 @@
  * for the head of the queue rather than polling.
  */
 
-import { CancelledError, RateLimitedError } from '../../core/errors.ts';
+import { CancelledError, isInterlayerError, RateLimitedError } from '../../core/errors.ts';
 import {
   DEFAULTS,
   definePolicy,
@@ -226,11 +226,17 @@ export function rateLimit(options: RateLimitPolicyOptions = {}): Policy<AttemptC
         const at = queue.indexOf(waiter);
         if (at !== -1) queue.splice(at, 1);
         // No token is consumed: tokens are only ever spent at admission.
+        // A typed abort reason (the call deadline's `TimeoutError`) is surfaced
+        // as itself; only an untyped abort becomes a `CancelledError`. Same rule
+        // as `abortErrorFor()` in routing and `interruptionOf()` in the runtime.
+        const reason: unknown = signal.reason;
         waiter.fail(
-          new CancelledError('Aborted while queued for a rate-limit token', {
-            ...errorContext(ctx, 0),
-            cause: signal.reason,
-          }),
+          isInterlayerError(reason)
+            ? reason
+            : new CancelledError('Aborted while queued for a rate-limit token', {
+                ...errorContext(ctx, 0),
+                cause: reason,
+              }),
         );
         // Dropping a waiter promotes the next one; re-arm (or disarm) for it.
         pump(runtime);

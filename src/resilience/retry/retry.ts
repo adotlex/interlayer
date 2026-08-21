@@ -19,17 +19,34 @@
  * Determinism: every clock read, every sleep and every jitter draw goes through
  * `ctx.runtime`. Nothing here touches `Date.now`, `Math.random` or `setTimeout`.
  *
- * KNOWN GAP, REPORTED NOT WORKED AROUND: `src/core/errors.ts` has no
- * `RetryExhaustedError` and `ErrorCode` is a closed union with no
- * `'RETRY_EXHAUSTED'` member, so R4 §1.6's "aggregate at >= 2 failures" cannot
- * be expressed. This policy therefore throws the LAST error UNWRAPPED in every
- * exhaustion case — which also keeps `err.code` and `err.retryable` intact for
- * the routing layer above (guide §4/U6: wrapping buries the real error). The
- * full chronological error list is preserved on `ctx.state`; read it with
- * {@link retryFailures}.
+ * WHAT THIS POLICY THROWS WHEN IT GIVES UP — R4 §1.6, now expressible:
+ *
+ *   1 failure   the ORIGINAL error, unwrapped. `maxAttempts: 1`, a
+ *               non-retryable error, or a predicate that says stop after the
+ *               first failure must all behave exactly like no retry wrapper at
+ *               all. Wrapping one error buries it and breaks `code` assertions.
+ *   >= 2        `RetryExhaustedError`, carrying `.attempts`, `.errors` (all of
+ *               them, chronologically) and `.cause` = the last one. The earlier
+ *               failures are frequently the diagnostic ones — the first is often
+ *               the real error and the rest are `ECONNREFUSED` from a
+ *               now-dead process — so discarding them is a debuggability
+ *               regression.
+ *   cancelled   `CancelledError`, never wrapped, never retried, never
+ *               aggregated.
+ *
+ * `RetryExhaustedError.retryable` is INHERITED FROM THE LAST FAILURE, which is
+ * what keeps the routing layer working: it advances the fallback chain on
+ * `error.retryable`, and a wrapper that answered for itself would strand the
+ * call on a provider that is merely having a bad minute. The chronological list
+ * is ALSO still parked on `ctx.state`; read it with {@link retryFailures}.
  */
 
-import { CancelledError, hasCode, isInterlayerError } from '../../core/errors.ts';
+import {
+  CancelledError,
+  hasCode,
+  isInterlayerError,
+  RetryExhaustedError,
+} from '../../core/errors.ts';
 import type {
   Policy,
   PolicyFactory,
@@ -245,10 +262,11 @@ export interface RetryFailureRecord {
 /**
  * Reads back what the last retry loop on this call recorded.
  *
- * This exists because core has no `RetryExhaustedError` to carry the earlier
- * errors (see the file header). Discarding them would be a debuggability
- * regression: the first failure is often the real one and the later ones are
- * `ECONNREFUSED` from a now-dead process.
+ * `RetryExhaustedError.errors` carries the same list, but only on the >= 2
+ * failure path and only if the error survives to the caller. This record is
+ * written on EVERY exhaustion, including the single-failure one where the
+ * original error is rethrown untouched, so middleware and telemetry can read
+ * the attempt history without catching anything.
  */
 export function retryFailures(ctx: Pick<CallContext, 'state'>): RetryFailureRecord | undefined {
   const value = ctx.state.get(RETRY_FAILURES_KEY);
@@ -374,9 +392,15 @@ export const retryPolicy: PolicyFactory<RetryPolicyOptions> = (
     };
     ctx.state.set(RETRY_FAILURES_KEY, record);
 
-    // The LAST error, UNWRAPPED — see the file header for why this is not
-    // `RetryExhaustedError`.
-    throw errors.at(-1);
+    // R4 §1.6. One failure is rethrown as itself; two or more are aggregated.
+    if (errors.length < 2) throw errors.at(-1);
+    throw new RetryExhaustedError(errors.length, errors, {
+      callId: ctx.callId,
+      capability: ctx.capability,
+      providerId: ctx.provider.id,
+      attempt: baseAttempt + errors.length - 1,
+      details: { strategy: resolved.strategy, maxAttempts: resolved.maxAttempts },
+    });
   };
 
   return definePolicy<AttemptContext, unknown>({

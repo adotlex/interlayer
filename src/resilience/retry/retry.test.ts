@@ -8,6 +8,7 @@ import {
   hasCode,
   ProviderError,
   RateLimitedError,
+  type RetryExhaustedError,
   TimeoutError,
   TransportError,
   ValidationError,
@@ -315,7 +316,7 @@ describe('retry:scheduled event', () => {
  * ------------------------------------------------------------------ */
 
 describe('error surfaced when everything fails', () => {
-  it('RT-8: throws the LAST error UNWRAPPED and keeps every error chronologically on ctx.state', async () => {
+  it('RT-8: aggregates >= 2 failures into RetryExhaustedError, last error as cause', async () => {
     const h = testContext({ random: constantRandom(0) });
     const first = new TransportError('first');
     const second = new TransportError('second');
@@ -323,15 +324,44 @@ describe('error surfaced when everything fails', () => {
     const s = script(h, [err(first), err(second)], err(third));
     const outcome = await run(retryPolicy({ maxAttempts: 3 }), h, s);
 
-    // Unwrapped: `code` and `retryable` survive for the routing layer above.
-    expect(outcome).toEqual({ ok: false, error: third });
-    expect(hasCode(outcome.ok ? undefined : outcome.error, 'TRANSPORT')).toBe(true);
+    // R4 §1.6: three failures aggregate. This is the behaviour the unit could
+    // not express while `ErrorCode` had no `RETRY_EXHAUSTED` member; it threw
+    // the last error unwrapped instead and said so in its header.
+    const error = outcome.ok ? undefined : outcome.error;
+    expect(hasCode(error, 'RETRY_EXHAUSTED')).toBe(true);
+    const exhausted = error as RetryExhaustedError;
+    expect(exhausted.attempts).toBe(3);
+    expect(exhausted.errors).toEqual([first, second, third]);
+    expect(exhausted.cause, 'Node prints the cause chain').toBe(third);
+    expect(exhausted.providerId).toBe(h.provider.id);
+    // Inherited from the last failure, so the fallback chain above still
+    // advances to the next provider instead of stranding the call here.
+    expect(exhausted.retryable).toBe(true);
 
     const record = retryFailures(h.call);
     expect(record?.attempts).toBe(3);
     expect(record?.errors).toEqual([first, second, third]);
     expect(record?.providerId).toBe(h.provider.id);
     expect(record?.predicateErrors).toEqual([]);
+  });
+
+  it('a SINGLE failure is still rethrown unwrapped, so `code` survives', async () => {
+    const h = testContext();
+    const only = new TransportError('only');
+    const outcome = await run(retryPolicy({ maxAttempts: 1 }), h, script(h, [], err(only)));
+
+    // `maxAttempts: 1` must behave exactly like no retry wrapper at all.
+    expect(outcome).toEqual({ ok: false, error: only });
+    expect(hasCode(outcome.ok ? undefined : outcome.error, 'TRANSPORT')).toBe(true);
+  });
+
+  it('a non-retryable error after one attempt is rethrown unwrapped too', async () => {
+    const h = testContext();
+    const fatal = new ValidationError('bad input', []);
+    const outcome = await run(retryPolicy({ maxAttempts: 3 }), h, script(h, [], err(fatal)));
+
+    expect(outcome).toEqual({ ok: false, error: fatal });
+    expect(retryFailures(h.call)?.attempts).toBe(1);
   });
 
   it('records nothing on ctx.state when the call succeeds', async () => {
@@ -345,7 +375,13 @@ describe('error surfaced when everything fails', () => {
     const s = script(h, [err('oops'), err(null)], err('last'));
     const outcome = await run(retryPolicy({ maxAttempts: 3, isRetryable: () => true }), h, s);
 
-    expect(outcome).toEqual({ ok: false, error: 'last' });
+    const error = outcome.ok ? undefined : outcome.error;
+    expect(hasCode(error, 'RETRY_EXHAUSTED')).toBe(true);
+    // Verbatim: a `null` throw stays `null`, a string stays a string.
+    expect((error as RetryExhaustedError).errors).toEqual(['oops', null, 'last']);
+    expect((error as RetryExhaustedError).cause).toBe('last');
+    // A non-Interlayer last error cannot claim retryability, so it does not.
+    expect((error as RetryExhaustedError).retryable).toBe(false);
     expect(retryFailures(h.call)?.errors).toEqual(['oops', null, 'last']);
     expect(h.runtime.pendingTimers).toBe(0);
   });
@@ -449,7 +485,7 @@ describe('isTransient — the default predicate (R4 §1.3)', () => {
   });
 
   it('RT-20: never retries CircuitOpenError, even though core marks it retryable', () => {
-    const open = new CircuitOpenError('openai', 0, 10_000);
+    const open = new CircuitOpenError('openai', 0, 10_000, 0);
     expect(open.retryable).toBe(true); // retryable ELSEWHERE, not here
     expect(isTransient(open, 1)).toBe(false);
   });
@@ -473,7 +509,7 @@ describe('isTransient — the default predicate (R4 §1.3)', () => {
 describe('RT-20 end to end', () => {
   it('does not retry a CircuitOpenError through the policy', async () => {
     const h = testContext();
-    const open = new CircuitOpenError('openai', 0, 10_000);
+    const open = new CircuitOpenError('openai', 0, 10_000, 0);
     const s = script(h, [], err(open));
     const outcome = await run(retryPolicy({ maxAttempts: 3 }), h, s);
 

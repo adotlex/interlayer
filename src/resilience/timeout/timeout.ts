@@ -26,12 +26,21 @@
  *    when attempt-scoped); a caller abort surfaces `CancelledError` (never
  *    retryable) carrying the caller's own `reason` as `cause`.
  *
+ *    The one refinement: when the INHERITED signal already carries a typed
+ *    Interlayer error as its reason — an outer total timeout, or the call
+ *    deadline the facade armed, both of which abort with a `TimeoutError` — that
+ *    error is the truth and is surfaced as-is rather than being relabelled
+ *    `CancelledError`. Relabelling turned every deadline breach that happened to
+ *    land inside an attempt into a `CANCELLED`, which reads as "the caller hung
+ *    up" and is exactly the confusion R4 §2.3 exists to prevent. This mirrors
+ *    `abortErrorFor()` in `src/routing/fallback.ts`, which already did it.
+ *
  * The narrowed context is produced by `{ ...ctx }` and handed to `next(ctx')`.
  * The incoming context is NEVER mutated; `state`, `failures` and `stats` stay
  * shared by reference, exactly as `src/core/types.ts` intends.
  */
 
-import { CancelledError, TimeoutError } from '../../core/errors.ts';
+import { CancelledError, isInterlayerError, TimeoutError } from '../../core/errors.ts';
 import {
   definePolicy,
   POLICY_SCOPE,
@@ -80,13 +89,22 @@ async function runWithTimeout<Ctx extends CallContext, R>(
   const runtime: Runtime = ctx.runtime;
   const failContext: ErrorContext = { ...errorContext, details: { source: budget.source } };
 
+  /**
+   * Why the inherited signal aborted, as a typed error. A typed reason (an outer
+   * timeout, the call deadline) is passed through unchanged so its `code`
+   * survives; anything else — including the bare `DOMException` the platform
+   * supplies for `abort()` with no argument — becomes a `CancelledError`.
+   */
+  const inheritedAbortError = (when: string): Error => {
+    const reason: unknown = outer.reason;
+    if (isInterlayerError(reason)) return reason.withContext(errorContext);
+    return new CancelledError(`Cancelled ${when} the ${scope}`, { ...errorContext, cause: reason });
+  };
+
   /* Entry guards, before any timer or listener exists (R4 §2.5). */
   if (outer.aborted) {
     // Caller already gave up: do not invoke the operation, do not create a timer.
-    throw new CancelledError(`Cancelled before the ${scope} started`, {
-      ...errorContext,
-      cause: outer.reason,
-    });
+    throw inheritedAbortError('before');
   }
   if (budget.expired) {
     // `timeoutMs: 0`, or an inherited deadline that has already elapsed.
@@ -130,13 +148,7 @@ async function runWithTimeout<Ctx extends CallContext, R>(
       ac.signal.addEventListener(
         'abort',
         () => {
-          reject(
-            timeoutError ??
-              new CancelledError(`Cancelled during the ${scope}`, {
-                ...errorContext,
-                cause: outer.reason,
-              }),
-          );
+          reject(timeoutError ?? inheritedAbortError('during'));
         },
         { once: true },
       );
@@ -170,8 +182,9 @@ function callErrorContext(ctx: CallContext): ErrorContext {
  * Honours `ctx.hints.timeoutMs` as a genuine per-call override of the
  * configured budget, then clamps the result to `ctx.deadlineAt` if one is
  * already in force: an absolute deadline is authoritative and may only be
- * tightened. `hints.deadlineMs` is deliberately NOT read here — translating it
- * into `ctx.deadlineAt` belongs to the facade, which owns `startedAt`.
+ * tightened. `hints.deadlineAt` is deliberately NOT read here — it is already an
+ * ABSOLUTE instant, and putting it on `ctx.deadlineAt` (which is what this
+ * policy then clamps against) belongs to the facade.
  */
 export const totalTimeout: PolicyFactory<TimeoutOptions, CallContext> = (
   options?: TimeoutOptions,

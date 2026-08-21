@@ -20,7 +20,7 @@
  */
 
 import type { Clock, Random, Timers } from '../../src/core/clock.ts';
-import { CancelledError } from '../../src/core/errors.ts';
+import { CancelledError, isInterlayerError, TimeoutError } from '../../src/core/errors.ts';
 import type { DeadlineHandle, TestRuntime } from '../../src/core/types.ts';
 import { seededRandom } from './seeded-random.ts';
 
@@ -44,6 +44,18 @@ export interface FakeClock extends Clock, Timers {
   runAll(): Promise<void>;
   /** Live count of scheduled, uncancelled timers. Assert `0` to prove no leak. */
   readonly pendingTimers: number;
+  /**
+   * Due time of the EARLIEST pending timer, or `undefined` when none is
+   * scheduled.
+   *
+   * This is what lets a driver step to the next due instant and no further.
+   * `runAll()` cannot do that job: it computes one target from the timers
+   * present when it is called, so a 250 ms provider sleep and a 30 s total
+   * timeout both fire in the same drain and the timeout wins a race it should
+   * never have entered. Stepping timer by timer is the only way to run an
+   * integration pipeline on virtual time and still land on exact instants.
+   */
+  readonly nextTimerAt: number | undefined;
   setTime(epochMs: number): void;
 }
 
@@ -98,6 +110,14 @@ export function createFakeClock(opts: FakeClockOptions = {}): FakeClock {
     get pendingTimers(): number {
       return timers.filter((t) => !t.cancelled).length;
     },
+    get nextTimerAt(): number | undefined {
+      let earliest: number | undefined;
+      for (const t of timers) {
+        if (t.cancelled) continue;
+        if (earliest === undefined || t.dueAt < earliest) earliest = t.dueAt;
+      }
+      return earliest;
+    },
     setTime(epochMs: number): void {
       clock = epochMs;
     },
@@ -120,6 +140,17 @@ export interface FakeRuntime extends TestRuntime {
   readonly slept: readonly number[];
 }
 
+/**
+ * Mirrors `interruptionOf` in `src/core/runtime.ts` exactly: an Interlayer abort
+ * reason (a deadline's `TimeoutError`) is surfaced as itself; anything else
+ * becomes a `CancelledError` carrying it as `cause`.
+ */
+function interruptionOf(signal: AbortSignal | undefined, message: string): Error {
+  const reason: unknown = signal?.reason;
+  if (isInterlayerError(reason)) return reason;
+  return new CancelledError(message, { cause: reason });
+}
+
 /** The full determinism seam: virtual clock, seeded PRNG, counter uuid. */
 export function createFakeRuntime(opts: FakeRuntimeOptions = {}): FakeRuntime {
   const clock =
@@ -140,7 +171,7 @@ export function createFakeRuntime(opts: FakeRuntimeOptions = {}): FakeRuntime {
       slept.push(ms);
       return new Promise<void>((resolve, reject) => {
         if (signal?.aborted === true) {
-          reject(new CancelledError('Aborted before sleep'));
+          reject(interruptionOf(signal, 'Aborted before sleep'));
           return;
         }
         const cleanup = (): void => {
@@ -153,16 +184,22 @@ export function createFakeRuntime(opts: FakeRuntimeOptions = {}): FakeRuntime {
         function onAbort(): void {
           clock.clearTimeout(handle);
           cleanup();
-          reject(new CancelledError('Aborted during sleep'));
+          reject(interruptionOf(signal, 'Aborted during sleep'));
         }
         signal?.addEventListener('abort', onAbort, { once: true });
       });
     },
 
+    /**
+     * Mirrors `createSystemRuntime().deadline()` EXACTLY, including the abort
+     * reason: a `TimeoutError` with `scope: 'call'`, never a `CancelledError`
+     * (R4 §2.3). A fake whose abort reason differs from the real one is a fake
+     * that certifies the wrong behaviour.
+     */
     deadline(ms: number, parent?: AbortSignal): DeadlineHandle {
       const ctrl = new AbortController();
       const handle = clock.setTimeout(
-        () => ctrl.abort(new CancelledError(`Deadline of ${ms}ms elapsed`)),
+        () => ctrl.abort(new TimeoutError(ms, 'call', { details: { source: 'runtime.deadline' } })),
         ms,
       );
       const onParent = (): void => ctrl.abort(parent?.reason);

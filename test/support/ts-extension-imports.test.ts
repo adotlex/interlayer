@@ -46,10 +46,13 @@ describe('.ts relative-import specifiers under Vitest', () => {
   });
 
   it('resolves a deep cross-tree file and its runtime behaviour survives', () => {
-    const e = new CircuitOpenError('alpha', 1_000, 11_000);
+    // `retryAfterMs` is `halfOpenAt - now`, so a breaker that opened at 1_000
+    // with a 10 s cooldown, asked at 4_000, answers 7_000 — not the configured
+    // 10_000. `now` is the fourth argument for exactly that reason.
+    const e = new CircuitOpenError('alpha', 1_000, 11_000, 4_000);
     expect(isInterlayerError(e)).toBe(true);
     expect(e.code).toBe('CIRCUIT_OPEN');
-    expect(e.retryAfterMs).toBe(10_000);
+    expect(e.retryAfterMs).toBe(7_000);
   });
 
   it('resolves a barrel whose own exports are a chain of .ts specifiers', () => {
