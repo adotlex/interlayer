@@ -108,15 +108,17 @@ describe('createRouter — the attempt stack', () => {
 
     await router.routeWith(h.call, [A], attemptOf({ a: 'ok' }).run);
 
-    // POLICY_ORDER: retry -> rate-limit -> circuit-breaker -> attempt-timeout.
+    // POLICY_ORDER: retry -> circuit-breaker -> rate-limit -> attempt-timeout.
+    // The breaker is OUTSIDE the limiter so an open circuit sheds load at once
+    // instead of buying a token it will never use — see POLICY_ORDER.
     expect(trace).toEqual([
       '>retry',
-      '>limiter',
       '>breaker',
+      '>limiter',
       '>timeout',
       '<timeout',
-      '<breaker',
       '<limiter',
+      '<breaker',
       '<retry',
     ]);
   });

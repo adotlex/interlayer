@@ -107,8 +107,8 @@ export function definePolicy<Ctx = AttemptContext, R = unknown>(
  * ```
  *   ┌─ TotalTimeout        (outermost)  bounds the whole logical operation
  *   │  ┌─ Retry                         the retry loop
- *   │  │  ┌─ RateLimit                  every physical attempt spends a token
- *   │  │  │  ┌─ CircuitBreaker          every physical attempt is recorded
+ *   │  │  ┌─ CircuitBreaker             admission first: shed load at once
+ *   │  │  │  ┌─ RateLimit               every physical attempt spends a token
  *   │  │  │  │  ┌─ AttemptTimeout       bounds ONE provider call
  *   │  │  │  │  │  └── provider handler (innermost)
  * ```
@@ -122,12 +122,37 @@ export function definePolicy<Ctx = AttemptContext, R = unknown>(
  * `RateLimit` sits INSIDE `Retry`, unlike Polly, because ours is a *quota*
  * limiter counting physical calls, not a *concurrency* limiter admitting
  * logical operations. Deliberate divergence — do not "fix" it back.
+ *
+ * ── WHY `CircuitBreaker` IS OUTSIDE `RateLimit` ───────────────────────────
+ *
+ * This pair was the other way round, and it broke fail-fast — the one property
+ * a breaker exists for. A call the breaker was about to reject first bought a
+ * token, which:
+ *
+ *  1. DRAINED the provider's quota for a request that was never made. The
+ *     limiter's own contract is that it counts PHYSICAL calls and never refunds
+ *     "because the physical call has been made"; here it had not been.
+ *  2. With the default `'wait'` exhaustion mode, made the fail-fast path SLEEP.
+ *     A burst against an open circuit did not shed, it QUEUED — and because the
+ *     wait happens inside the fallback chain, a HEALTHY sibling with an
+ *     untouched bucket was delayed by exactly the dead provider's queue time.
+ *
+ * R4 §5.6 justified `Retry → RateLimit`; it never justified `RateLimit →
+ * Breaker`. Both of the constraints it did state still hold here: retry stays
+ * OUTSIDE the limiter, so every physical try spends a token, and the breaker
+ * still sits inside retry, so it observes every physical attempt.
+ *
+ * The acknowledged cost, recorded so it is a decision and not an oversight: a
+ * half-open probe now holds its trial slot while it waits for a token, so a
+ * limiter queue can delay the breaker's recovery by up to `maxQueueWaitMs`.
+ * That is bounded and self-correcting; spending quota on calls that never
+ * happen, and sleeping before a fail-fast, are neither.
  */
 export const POLICY_ORDER: readonly PolicyKind[] = [
   'total-timeout',
   'retry',
-  'rate-limit',
   'circuit-breaker',
+  'rate-limit',
   'attempt-timeout',
   'custom',
 ] as const;

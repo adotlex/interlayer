@@ -275,12 +275,18 @@ function metaProviderComparisonFailsOpen(meta: CallResult<ChatOut>): boolean {
 }
 
 /**
- * ── FINDING 3 (recorded, not fixed) ──────────────────────────────────────
+ * ── FINDING 3 (type hole open, runtime hole CLOSED) ──────────────────────
  *
  * R6 §5.1 P6 verified that a route hint is checked against the registered
  * provider names. `CallOptions.providers` is `readonly string[]`, shared by
- * every layer regardless of `Ids`, so a typo'd provider hint compiles and is
- * simply ignored at selection time.
+ * every layer regardless of `Ids`, so a typo'd provider hint still COMPILES —
+ * that half is unchanged and the assertion below still records it.
+ *
+ * What changed is what happens next. The hint used to be dropped in silence at
+ * selection time, so a partial typo (`['openai', 'anthropc']`) pinned one
+ * provider and left the caller believing in a fallback they no longer had.
+ * `createLayer` now checks the hint against the registry and raises VALIDATION
+ * naming the offending id and its index.
  */
 type L20_ProvidersHintIsUnchecked = Expect<
   Equal<NonNullable<CallOptions['providers']>, readonly string[]>
@@ -386,13 +392,20 @@ describe('the rest of the Layer surface', () => {
     expect(hasCode(boom, 'NO_PROVIDER')).toBe(true);
   });
 
-  it('FINDING 3: an unregistered `providers` hint compiles and is ignored', async () => {
-    // The hint names a provider that does not exist. Nothing type-checks it,
-    // and selection simply finds no candidate.
+  it('FINDING 3: an unregistered `providers` hint compiles, but is REJECTED at run time', async () => {
+    // The hint names a provider that does not exist. Nothing type-checks it —
+    // `providersHintFailsOpen()` compiles, which is the surviving half of the
+    // finding — but the call no longer proceeds as if the id had never been
+    // written. It used to surface NO_PROVIDER only because the pool emptied,
+    // which said nothing about the typo and said nothing at all when only SOME
+    // of the ids were wrong.
     const boom = await providersHintFailsOpen()
       .then(() => undefined)
       .catch((error: unknown) => error);
-    expect(hasCode(boom, 'NO_PROVIDER')).toBe(true);
+    expect(hasCode(boom, 'VALIDATION')).toBe(true);
+    if (hasCode(boom, 'VALIDATION')) {
+      expect(boom.issues.map((issue) => issue.code)).toEqual(['unknown_provider']);
+    }
     await layer.close();
   });
 });

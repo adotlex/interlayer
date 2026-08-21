@@ -26,13 +26,17 @@
  * carries `src` and nothing else, so `main: ./dist/index.js` resolves to
  * nothing and every install is broken on `import`.
  *
- * ── Why the two failing tests below, and no fix ───────────────────────────
+ * ── The fix, and what each half of this file checks ───────────────────────
  *
  * The fix is one line in `package.json` (R1 §5.1 specifies
  * `"clean": "rm -rf dist node_modules/.cache"`, which is correct and was not
- * what shipped). This agent does not own `package.json`. So: a static check
- * that pins the invariant, and a live reproduction that proves the mechanism
- * against the real `src/` — both RED until the script is fixed.
+ * what shipped); `clean` now deletes `node_modules/.cache/tsbuild` as well as
+ * `dist`. The static checks below pin that invariant against the real script.
+ *
+ * The live reproduction proves the MECHANISM against the real `src/`, and note
+ * what it can and cannot say: it never invokes `npm run clean`, so it measures
+ * `tsc`'s own behaviour, not this package's. See the long note on
+ * `deleting ONLY the output directory does not make the next build re-emit`.
  *
  * The reproduction never touches the repository's own `dist/` or its shared
  * `node_modules/.cache`: it compiles into a private temp directory with its own
@@ -236,9 +240,38 @@ describe.skipIf(!canCompile)('reproduction against the real src/', () => {
     expect(afterDistDeleted?.status).toBe(0);
   });
 
-  /** FAILING — documents BUG-T6-01. */
-  it('deleting the output directory makes the next build re-emit it', () => {
-    expect(afterDistDeleted?.emitted).toBe(shippedModuleCount());
+  /**
+   * THE DEFECT ITSELF, pinned as behaviour of `tsc` rather than of this package.
+   *
+   * ── This assertion was inverted, deliberately, and here is why ────────────
+   *
+   * It was written as `expect(afterDistDeleted?.emitted).toBe(shippedModuleCount())`
+   * — "deleting the output directory makes the next build re-emit it" — on the
+   * understanding that fixing `clean` in `package.json` would turn it green.
+   * It cannot. This block never runs `npm run clean`: it deletes `outDir` by
+   * hand in a private workspace and then runs `tsc` with its OWN
+   * `tsBuildInfoFile`. What it therefore measures is a property of the
+   * TypeScript compiler — that an incremental (non-`--build`) invocation trusts
+   * its `.tsbuildinfo` and never checks whether the outputs it describes still
+   * exist — and no change to this repository can alter it. Verified on the
+   * pinned tsc (6.0.3), with and without `composite: true`: 0 files emitted.
+   *
+   * So the assertion is inverted to state the fact, which is what makes the
+   * fix necessary rather than optional. The invariant the file exists to
+   * protect is unchanged and is enforced by its three neighbours:
+   *
+   *   `the cache lies outside everything clean deletes`  — the mechanism,
+   *   `npm run clean removes the incremental build cache` — the fix, in
+   *                                                        `package.json`,
+   *   `removing the cache as well as the output DOES rebuild` — the proof that
+   *                                                        the fix suffices.
+   *
+   * If tsc ever starts validating output presence, this test goes red and is
+   * the right place to learn that `clean` no longer has to delete the cache.
+   */
+  it('deleting ONLY the output directory does not make the next build re-emit', () => {
+    expect(afterDistDeleted?.emitted, 'tsc trusts a cache describing files that are gone').toBe(0);
+    expect(shippedModuleCount(), 'and there really was something to re-emit').toBeGreaterThan(0);
   });
 
   it('removing the cache as well as the output DOES rebuild — the diagnosis', () => {

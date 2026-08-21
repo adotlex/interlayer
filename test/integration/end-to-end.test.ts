@@ -51,8 +51,15 @@ interface EmbedReply {
   readonly by: string;
 }
 
+// `chat` is declared IDEMPOTENT here on purpose. `createLayer` now reads
+// `capability({ idempotent })` and wires it into the retry policy's
+// idempotency gate (R6 §2 rule 3: "the layer never retries a non-idempotent
+// capability unless told to"), so a contract that declares `false` and a test
+// that then asserts three attempts cannot both be right. This fixture used to
+// say `false` only because nothing read the flag. Every assertion below is
+// unchanged; the contract is what was wrong.
 const ai = defineContract({
-  chat: capability<ChatRequest, ChatReply>({ idempotent: false }),
+  chat: capability<ChatRequest, ChatReply>({ idempotent: true }),
   embed: capability<EmbedRequest, EmbedReply>({ idempotent: true }),
 });
 

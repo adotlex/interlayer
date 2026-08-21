@@ -8,20 +8,21 @@
  *   Cancelled > Timeout(total) > Timeout(attempt) > CircuitOpen > RateLimited
  *             > RetryExhausted
  *
- * Two entries in that list do not survive contact with the canonical order, and
- * BOTH are consequences the order was chosen with its eyes open. They are
- * recorded here as executable facts rather than smoothed over:
+ * One entry in that list does not survive contact with the canonical order, and
+ * it is a consequence the order was chosen with its eyes open. It is recorded
+ * here as an executable fact rather than smoothed over:
  *
- *  1. `RateLimit` sits OUTSIDE `CircuitBreaker` (R4 §5.6, deliberate). In the
- *     default `'wait'` mode that is invisible — the limiter waits and then the
- *     breaker refuses, so CIRCUIT_OPEN still surfaces. In `'reject'` mode the
- *     limiter throws FIRST and RATE_LIMITED surfaces, inverting those two
- *     entries. §5.6 names this cost explicitly ("we spend a token before
- *     discovering it").
- *  2. `RetryExhaustedError` is a WRAPPER, not a peer (R4 §1.6). Two or more
- *     failures inside one loop are aggregated, so RETRY_EXHAUSTED is what
- *     surfaces and the "higher-precedence" error is reached through `.cause`.
- *     A single failure is never wrapped, which is when the list holds exactly.
+ *  - `RetryExhaustedError` is a WRAPPER, not a peer (R4 §1.6). Two or more
+ *    failures inside one loop are aggregated, so RETRY_EXHAUSTED is what
+ *    surfaces and the "higher-precedence" error is reached through `.cause`.
+ *    A single failure is never wrapped, which is when the list holds exactly.
+ *
+ * `CircuitOpen > RateLimited` used to be the OTHER exception: the limiter sat
+ * outside the breaker, so in `'reject'` mode it threw first and RATE_LIMITED
+ * inverted with CIRCUIT_OPEN, while in `'wait'` mode a fail-fast slept for a
+ * token first. `POLICY_ORDER` now puts the breaker outside the limiter, so the
+ * flat list holds in BOTH exhaustion modes — see the two tests below and the
+ * reasoning on `POLICY_ORDER` in `src/core/policy.ts`.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -238,12 +239,21 @@ describe('error precedence (ORD-11)', () => {
     await layer.close();
   });
 
-  it('in the default WAIT mode, an open breaker still wins after the queue drains', async () => {
+  it('in the default WAIT mode an open breaker sheds AT ONCE, without queueing', async () => {
+    // CHANGED WITH `POLICY_ORDER`, deliberately. This used to assert
+    // `runtime.now() === 1_000` and `tokensOf(limiter) === 0` after the second
+    // run — the limiter queued for a full refill interval and the token was
+    // spent — under the heading "an open breaker still wins after the queue
+    // drains". That is precisely the defect: a circuit breaker that sleeps
+    // before failing fast has lost the only property it exists for, and the
+    // quota it burned was for a request that was never made. With the breaker
+    // outside the limiter the refusal is instantaneous and free.
     const provider = fakeProvider('p').alwaysFail(new TransportError('down'));
     const handle = testContext({ provider });
     const composition = buildComposition({
       retry: false,
-      // One token, already spent by the first run; the second run must wait.
+      // One token, spent by the first run. Under the OLD order the second run
+      // had to wait a full second for a refill before being told no.
       rateLimit: { capacity: 1, refillPerSec: 1, key: 'p', onExhaustion: 'wait' },
       breaker: { mode: 'consecutive', consecutiveFailureThreshold: 1, resetMs: 60_000 },
       timeout: false,
@@ -257,24 +267,27 @@ describe('error precedence (ORD-11)', () => {
       composition.run(handle.call, handle.provider, provider.handler()),
     );
     expect(breakerView(breaker, 'p')?.state).toBe('open');
+    expect(tokensOf(limiter), 'the first run made a real call and paid for it').toBe(0);
 
     const error = await rejectionOf(
       handle.runtime,
       composition.run(handle.call, handle.provider, provider.handler()),
     );
 
-    expect(error.code, 'the limiter paced, then the breaker refused').toBe('CIRCUIT_OPEN');
-    expect(handle.runtime.now(), 'a full second of queueing to be told no').toBe(1_000);
-    expect(tokensOf(limiter), 'and the token was spent on the way').toBe(0);
+    expect(error.code, 'the breaker refused before the limiter was consulted').toBe('CIRCUIT_OPEN');
+    expect(handle.runtime.now(), 'fail-fast means fast: no queueing').toBe(0);
+    expect(tokensOf(limiter), 'and no quota spent on a call that never happened').toBe(0);
     expect(provider.callCount).toBe(1);
     await composition.dispose();
   });
 
-  it('in REJECT mode the limiter pre-empts the breaker — RATE_LIMITED, not CIRCUIT_OPEN', async () => {
-    // The one place the flat ORD-11 list inverts. This is the acknowledged cost
-    // of putting RateLimit outside CircuitBreaker (R4 §5.6): in reject mode the
-    // limiter answers before the breaker is ever consulted. Asserting it so the
-    // ordering cannot be "fixed" back to Polly's without this test failing.
+  it('in REJECT mode the breaker still wins — CIRCUIT_OPEN, not RATE_LIMITED', async () => {
+    // CHANGED WITH `POLICY_ORDER`, deliberately. This used to assert
+    // RATE_LIMITED, documented as "the one place the flat ORD-11 list inverts"
+    // and as the acknowledged cost of RateLimit-outside-CircuitBreaker. The
+    // pair has been swapped, so the inversion is gone and ORD-11 now holds in
+    // both exhaustion modes. Asserting it so the ordering cannot drift back
+    // without this test failing.
     const provider = fakeProvider('p').alwaysFail(new TransportError('down'));
     const handle = testContext({ provider });
     const composition = buildComposition({
@@ -297,9 +310,9 @@ describe('error precedence (ORD-11)', () => {
       composition.run(handle.call, handle.provider, provider.handler()),
     );
 
-    expect(error.code).toBe('RATE_LIMITED');
-    if (hasCode(error, 'RATE_LIMITED')) expect(error.retryAfterMs).toBe(1_000);
-    expect(handle.runtime.now(), 'reject mode never waits').toBe(0);
+    expect(error.code).toBe('CIRCUIT_OPEN');
+    if (hasCode(error, 'CIRCUIT_OPEN')) expect(error.retryAfterMs).toBe(60_000);
+    expect(handle.runtime.now(), 'neither policy waits').toBe(0);
     await composition.dispose();
   });
 

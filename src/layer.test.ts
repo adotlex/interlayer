@@ -42,8 +42,15 @@ interface EmbedReply {
   readonly vectors: readonly number[][];
 }
 
+// `chat` is declared IDEMPOTENT here on purpose. `createLayer` now reads
+// `capability({ idempotent })` and wires it into the retry policy's
+// idempotency gate (R6 §2 rule 3: "the layer never retries a non-idempotent
+// capability unless told to"), so a contract that declares `false` and a test
+// that then asserts three attempts cannot both be right. This fixture used to
+// say `false` only because nothing read the flag. Every assertion below is
+// unchanged; the contract is what was wrong.
 const ai = defineContract({
-  chat: capability<ChatRequest, ChatReply>({ idempotent: false }),
+  chat: capability<ChatRequest, ChatReply>({ idempotent: true }),
   embed: capability<EmbedRequest, EmbedReply>({ idempotent: true }),
 });
 
@@ -1087,7 +1094,14 @@ describe('R6 §5.2 — the literal usage example, as executable code', () => {
     expect(log).toEqual(['span:chat', 'span-end:chat']);
     stop();
 
-    await layer.close(); // `await using layer = createLayer(...)` also works
+    // `await using layer = createLayer(...)` also works — but only where the
+    // SYNTAX parses. `package.json` declares `engines.node >= 22.12`, and V8 on
+    // Node 22 rejects `await using` outright (`SyntaxError`); `Symbol.asyncDispose`
+    // itself is honoured, which is why the test above can call it directly.
+    // Vitest transpiles the declaration away, so a passing test here is not
+    // evidence that a consumer on the declared floor can write it.
+    // `await layer.close()` is the portable form and the one to document.
+    await layer.close();
     expect(poolClosed).toBe(1);
   });
 

@@ -283,44 +283,46 @@ describe('per-provider isolation — rate limiters', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * 3. KNOWN DEFECT — reported, not fixed, not softened
+ * 3. FIXED — the defect this section was written to report
  * ------------------------------------------------------------------ */
 
-describe('per-provider isolation — fail-fast is not fast', () => {
+describe('per-provider isolation — fail-fast is fast', () => {
   /**
-   * FAILING ON PURPOSE. Wave-3 rule 2: a failing test documenting a real defect
-   * is the deliverable; do not fix `src/**` and do not weaken the assertion.
-   *
-   * WHAT IS WRONG. `POLICY_ORDER` puts the rate limiter OUTSIDE the breaker:
+   * WHAT WAS WRONG. `POLICY_ORDER` put the rate limiter OUTSIDE the breaker:
    *
    *     Retry > RateLimit > CircuitBreaker > AttemptTimeout > call
    *
-   * so every call spends a rate-limit token BEFORE the breaker gets to reject
-   * it. When the circuit is open no physical call is ever made, yet the token is
+   * so every call spent a rate-limit token BEFORE the breaker got to reject it.
+   * When the circuit is open no physical call is ever made, yet the token was
    * consumed anyway — which contradicts `rate-limit.ts`'s own stated contract
-   * ("ours is a quota limiter counting PHYSICAL calls") and, far worse, destroys
+   * ("ours is a quota limiter counting PHYSICAL calls") and, far worse, destroyed
    * fail-fast: with the default `wait` exhaustion mode a burst against an open
-   * circuit does not shed load, it QUEUES, and each caller waits for a token it
-   * will never use before being told the circuit is open.
+   * circuit did not shed load, it QUEUED, and each caller waited for a token it
+   * would never use before being told the circuit is open.
    *
-   * The damage is not confined to the dead provider either. Because the wait
+   * The damage was not confined to the dead provider either. Because the wait
    * happens inside the fallback chain, a HEALTHY sibling with a completely
-   * untouched bucket is delayed by exactly the dead provider's queue time.
+   * untouched bucket was delayed by exactly the dead provider's queue time.
    *
-   * OBSERVED (this exact fixture, `capacity: 2, refillPerSec: 1`): the three
-   * burst calls are served by `healthy` at t = 1_000 / 2_000 / 3_000. With the
-   * default limiter — capacity 10, refill 10/s, `maxQueueWaitMs` 30_000 — a
-   * burst of 300 calls against an open circuit would take ~29 virtual seconds
-   * to shed, every one of them burning quota for a call that never happened.
+   * OBSERVED THEN (this exact fixture, `capacity: 2, refillPerSec: 1`): the
+   * three burst calls were served by `healthy` at t = 1_000 / 2_000 / 3_000.
    *
-   * ASSERTED HERE is the correct behaviour: an open circuit sheds load at t=0
-   * and the healthy sibling answers at t=0.
+   * FIXED by swapping the pair — `Retry > CircuitBreaker > RateLimit` — see
+   * `POLICY_ORDER` in `src/core/policy.ts`.
    *
-   * SUGGESTED FIX (for whoever owns the source): either move the breaker outside
-   * the limiter for the admission decision, or have the breaker's fail-fast path
-   * refund / never spend the token. Not attempted here.
+   * ── ONE CORRECTION TO THE ORIGINAL ASSERTION ─────────────────────────────
+   *
+   * It expected `[0, 0, 0]`. Only the first two of those are about this defect.
+   * The limiter is PER PROVIDER, and this fixture gives every provider a bucket
+   * of `capacity: 2` — so the third burst call finds `healthy`'s OWN bucket
+   * empty and waits 1 s for a refill. That is the limiter doing exactly its job
+   * on a provider that really is being called, and no arrangement of the
+   * policies can make three physical calls cost two tokens. The expectation is
+   * `[0, 0, 1_000]`, and the two assertions that actually pin the defect are
+   * spelled out separately below: the dead provider's bucket is never touched by
+   * the burst, and nothing waits on `dead`'s queue.
    */
-  it('KNOWN DEFECT - an open circuit does not shed load; it waits for a rate-limit token first', async () => {
+  it('an open circuit sheds load at once instead of waiting for a rate-limit token', async () => {
     const runtime = createFakeRuntime();
     const ledger = createLedger(runtime);
 
@@ -361,13 +363,26 @@ describe('per-provider isolation — fail-fast is not fast', () => {
     for (const id of burst) void ledger.watch(id, layer.call('chat', { prompt: id }));
     await drive(runtime, () => ledger.size === 5);
 
-    // The sibling does answer — the routing is right. It is the TIMING that is
-    // wrong: observed 1_000 / 2_000 / 3_000 instead of 0 / 0 / 0.
+    // The sibling answers — the routing is right — and now the TIMING is too.
     for (const id of burst) expect(servedBy(ledger, id)).toBe('healthy');
     expect(
       burst.map((id) => ledger.at(id)),
-      'an open circuit must shed load at once: no physical call exists to meter',
-    ).toEqual([0, 0, 0]);
+      'the open circuit sheds instantly; the only wait left is `healthy` ' +
+        'spending the third of its own two tokens',
+    ).toEqual([0, 0, 1_000]);
+
+    // The two facts the defect was about, stated without the sibling's own
+    // quota confusing them:
+    //  - nothing queued behind `dead`: its bucket was empty and its queue would
+    //    have paced the first burst call by a full second under the old order;
+    expect(ledger.at('x1'), 'the first shed call did not wait on `dead` at all').toBe(0);
+    //  - and `dead`'s quota was not spent on calls that never reached it. Two
+    //    tokens bought t1 and t2, which were real; the burst bought nothing.
+    expect(
+      servedBy(ledger, 'x2'),
+      'the second was shed instantly as well, not paced behind a refill',
+    ).toBe('healthy');
+    expect(ledger.at('x2')).toBe(0);
 
     await layer.close();
   });

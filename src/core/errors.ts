@@ -60,10 +60,28 @@ export abstract class InterlayerError extends Error {
     ) {
       return this;
     }
+    // Read the trace as a VALUE first. V8 installs `stack` as a lazy own
+    // ACCESSOR that formats the structured trace from ITS RECEIVER, so cloning
+    // that descriptor onto a fresh `Object.create(proto)` re-binds the getter to
+    // an object V8 never captured a trace for and it answers `undefined`. Since
+    // the copy branch is the NORMAL path — a provider throws
+    // `new TransportError('down')` and the router stamps identity on the way
+    // out — cloning the descriptor destroyed the stack of nearly every provider
+    // error. Pin it as a data property below instead. Do not "simplify" this
+    // back into the descriptor loop.
+    const stack: unknown = this.stack;
     const next = Object.create(Object.getPrototypeOf(this) as object) as this;
     for (const key of Reflect.ownKeys(this)) {
       const desc = Object.getOwnPropertyDescriptor(this, key);
       if (desc !== undefined) Object.defineProperty(next, key, desc);
+    }
+    if (stack !== undefined) {
+      Object.defineProperty(next, 'stack', {
+        value: stack,
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
     }
     const fill = (k: 'providerId' | 'capability' | 'callId' | 'attempt', v: unknown): void => {
       if (v !== undefined && (next as unknown as Record<string, unknown>)[k] === undefined) {
@@ -319,17 +337,76 @@ export function hasCode<K extends ErrorCode>(
 export function toInterlayerError(e: unknown, ctx: ErrorContext = {}): AnyInterlayerError {
   if (isInterlayerError(e)) return e.withContext(ctx);
   if (isAbortLike(e)) return new CancelledError('Aborted', { ...ctx, cause: e });
-  const message = e instanceof Error ? e.message : String(e);
-  return new ProviderError(message, { ...ctx, cause: e }, extractStatus(e));
+  if (isForeignTimeout(e)) {
+    // A provider's OWN upstream deadline. Retryable, and it must fall back —
+    // see {@link isForeignTimeout}.
+    return new TransportError(describeThrown(e), { ...ctx, cause: e });
+  }
+  return new ProviderError(describeThrown(e), { ...ctx, cause: e }, extractStatus(e));
 }
 
+/**
+ * A CALLER withdrawal, and nothing else.
+ *
+ * `AbortError` is what the platform rejects with when a signal WE were given is
+ * aborted, so it is genuinely a cancellation.
+ *
+ * `TimeoutError` used to be matched here too, and that was the single most
+ * damaging misclassification in the taxonomy. A `DOMException` named
+ * `TimeoutError` is exactly what `fetch(url, { signal: AbortSignal.timeout(ms) })`
+ * rejects with — i.e. the PROVIDER's own deadline, not the caller hanging up —
+ * and `CANCELLED` is the only code that is BOTH non-retryable AND in
+ * `NO_FALLBACK_CODES` (`src/routing/fallback.ts`). Relabelling it therefore
+ * stopped the retry loop AND threw out of the fallback chain immediately,
+ * leaving a healthy alternate unused: the very outage `defaultShouldFallback`
+ * was rewritten to prevent, entering through a different door.
+ *
+ * The rule, stated once: a provider's INTERNAL timeout is a provider failure;
+ * only the CALLER's abort is a cancellation.
+ */
 function isAbortLike(e: unknown): boolean {
-  return (
-    typeof e === 'object' &&
-    e !== null &&
-    ((e as { name?: unknown }).name === 'AbortError' ||
-      (e as { name?: unknown }).name === 'TimeoutError')
-  );
+  return typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'AbortError';
+}
+
+/**
+ * A foreign error announcing that the PROVIDER's own deadline expired.
+ *
+ * Mapped to `TransportError` — retryable, and absent from `NO_FALLBACK_CODES`,
+ * so the chain advances — rather than to this library's `TimeoutError`.
+ * `TimeoutError` means "a budget THIS library armed expired": it carries
+ * `timeoutMs` and `scope`, both of which are our own configuration, and minting
+ * one here would mean inventing a duration nobody measured and discarding the
+ * provider's own message. `TRANSPORT` says what is actually known — we sent a
+ * request and never got a response — and keeps the message and `cause` intact.
+ *
+ * Retrying is still gated correctly for a non-idempotent capability: the retry
+ * loop sees the RAW throw, and `passesIdempotencyGate` refuses anything named
+ * `TimeoutError` because the write may have landed invisibly.
+ */
+function isForeignTimeout(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'TimeoutError';
+}
+
+/**
+ * `String(e)`, but TOTAL.
+ *
+ * `String()` THROWS on a value with no `Symbol.toPrimitive`/`toString` — most
+ * commonly `Object.create(null)`, the standard shape for a safe dictionary, and
+ * so reachable from ordinary provider code. When it threw here the normaliser's
+ * own `TypeError` replaced the thrown value: the surfaced failure described a
+ * bug inside this library, `cause` lost the only reference anything held to
+ * what the provider actually threw, and — because the throw happens on the line
+ * above the emit — the attempt's `attempt:failure` event was never emitted at
+ * all. The normalisation funnel of an error taxonomy has to be total.
+ */
+function describeThrown(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  try {
+    return String(e);
+  } catch {
+    // Never throws: it reads only the internal class, not user code.
+    return Object.prototype.toString.call(e);
+  }
 }
 
 function extractStatus(e: unknown): number | undefined {

@@ -239,7 +239,40 @@ describe('ErrorCode: NO_PROVIDER', () => {
     await layer.close();
   });
 
-  it('a providers hint matching nothing -> NO_PROVIDER naming the candidate count', async () => {
+  it('a providers hint that filters the pool to nothing -> NO_PROVIDER', async () => {
+    // CHANGED: this used to hint `['ghost']`, an id no provider answers to, and
+    // assert NO_PROVIDER. An unrecognised id is now a VALIDATION error (see the
+    // test below) because it is a caller mistake rather than a routing outcome,
+    // so the NO_PROVIDER path is exercised with a REGISTERED id that simply
+    // cannot serve this capability — which is what "matched the routing hints"
+    // was always meant to describe.
+    const runtime = createFakeRuntime();
+    const real = defineProvider(probe, {
+      id: 'real',
+      capabilities: { run: async (): Promise<Say> => ({ a: '', by: 'real' }) },
+    });
+    const other = defineProvider(probe, {
+      id: 'other',
+      capabilities: { spare: async (): Promise<Say> => ({ a: '', by: 'other' }) },
+    });
+    const layer = createLayer({ contract: probe, providers: [real, other], runtime });
+
+    const error = await rejectionOf(
+      runtime,
+      layer.call('run', { q: 'x' }, { providers: ['other'] }),
+    );
+
+    expect(hasCode(error, 'NO_PROVIDER')).toBe(true);
+    expect(error.message).toContain('routing hints');
+    await layer.close();
+  });
+
+  it('a providers hint naming an id nobody answers to -> VALIDATION, not silence', async () => {
+    // `CallOptions.providers` is `readonly string[]` — shared by every layer
+    // regardless of its `Ids` union — so a typo compiles. It used to be dropped
+    // in silence: with `['real', 'ghost']` the call ran against `real` alone and
+    // the caller kept believing in a fallback that no longer existed. The id is
+    // reported with its INDEX in the hint, so a partial typo is pinpointed.
     const runtime = createFakeRuntime();
     const real = defineProvider(probe, {
       id: 'real',
@@ -249,11 +282,22 @@ describe('ErrorCode: NO_PROVIDER', () => {
 
     const error = await rejectionOf(
       runtime,
-      layer.call('run', { q: 'x' }, { providers: ['ghost'] }),
+      layer.call('run', { q: 'x' }, { providers: ['real', 'ghost'] }),
     );
 
-    expect(hasCode(error, 'NO_PROVIDER')).toBe(true);
-    expect(error.message).toContain('routing hints');
+    expect(hasCode(error, 'VALIDATION')).toBe(true);
+    if (hasCode(error, 'VALIDATION')) {
+      expect(error.issues).toEqual([
+        {
+          path: ['providers', 1],
+          message: 'no provider with id "ghost" is registered',
+          code: 'unknown_provider',
+        },
+      ]);
+    }
+    expect(error.message).toContain('ghost');
+    // Not retryable and never falls back: every provider would reject it alike.
+    expect(error.retryable).toBe(false);
     await layer.close();
   });
 
@@ -746,7 +790,10 @@ type Reachability =
  * only mechanism in the repo that makes the taxonomy's completeness checkable.
  */
 const REACHABILITY: Record<ErrorCode, Reachability> = {
-  VALIDATION: { kind: 'reachable', how: 'handler rejects its input via v.parse' },
+  VALIDATION: {
+    kind: 'reachable',
+    how: 'handler rejects its input via v.parse; unknown id in the providers hint',
+  },
   CONFIG: { kind: 'reachable', how: 'duplicate provider id; middleware re-entering next()' },
   UNSUPPORTED_CAPABILITY: {
     kind: 'reachable',

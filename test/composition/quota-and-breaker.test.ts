@@ -326,14 +326,27 @@ describe('a breaker opening inside the retry loop (ORD-6)', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * 4. RateLimit is OUTSIDE the breaker — the acknowledged cost of the order
+ * 4. RateLimit is INSIDE the breaker — quota is only spent on real calls
  * ------------------------------------------------------------------ */
 
-describe('RateLimit outside CircuitBreaker', () => {
-  it('spends a token to discover that the breaker is open', async () => {
-    // R4 §5.6 names this cost explicitly and accepts it, because the breaker
-    // must not hold a half-open trial slot while a call sits in the limiter
-    // queue. Recording it as an executable fact so it cannot drift silently.
+describe('RateLimit inside CircuitBreaker', () => {
+  it('spends NO token to discover that the breaker is open', async () => {
+    // CHANGED WITH `POLICY_ORDER`, deliberately. This test used to be called
+    // "spends a token to discover that the breaker is open" and asserted 8
+    // tokens left, on the grounds that the breaker must not hold a half-open
+    // trial slot while a call sits in the limiter queue.
+    //
+    // That trade was the wrong way round. The limiter's own contract is that it
+    // meters PHYSICAL calls and never refunds "because the physical call has
+    // been made" — and for a refusal it has not been. Worse, in the default
+    // `'wait'` exhaustion mode the fail-fast path SLEPT waiting for a token it
+    // would never use, so a burst against an open circuit queued instead of
+    // shedding, and a healthy sibling later in the fallback chain was delayed by
+    // exactly the dead provider's queue time.
+    //
+    // The cost that remains — a half-open probe holding its slot while it waits
+    // for a token — is bounded by `maxQueueWaitMs` and self-correcting. See
+    // `POLICY_ORDER` in `src/core/policy.ts`.
     const provider = fakeProvider('p').alwaysFail(new TransportError('down'));
     const handle = testContext({ provider });
     const composition = buildComposition({
@@ -361,7 +374,7 @@ describe('RateLimit outside CircuitBreaker', () => {
 
     expect(second.code).toBe('CIRCUIT_OPEN');
     expect(provider.callCount, 'the provider was never reached the second time').toBe(1);
-    expect(tokensOf(limiter), 'but a token was still spent getting there').toBe(8);
+    expect(tokensOf(limiter), 'and no quota was spent finding that out').toBe(9);
     await composition.dispose();
   });
 });
@@ -435,18 +448,27 @@ describe('half-open admission inside a retry loop', () => {
  * ------------------------------------------------------------------ */
 
 describe('what a total-timeout breach does to the breaker', () => {
-  it('is scored as a provider FAILURE, unlike a caller cancellation', async () => {
-    // `isUnscored()` discards `CancelledError` — a caller withdrawal says
-    // nothing about provider health — but deliberately keeps `TimeoutError`,
-    // whose doc comment justifies that for the ATTEMPT timeout ("our own
-    // attempt timeout firing IS evidence about the provider").
+  it('is NOT scored, exactly like a caller cancellation', async () => {
+    // DECIDED, and changed with `isUnscored()`. This test used to be called
+    // "is scored as a provider FAILURE, unlike a caller cancellation" and
+    // asserted `'open'`, flagging the question to the orchestrator because
+    // R4 §3.7 does not decide it either way. It is decided now, and the answer
+    // is that a CALL-scope timeout is not evidence about the provider.
     //
-    // Because the total timeout aborts the signal the attempt timeout inherits,
-    // a CALL-scope breach reaches the breaker as a `TimeoutError` too, and is
-    // scored the same way. Pinning the behaviour here: a caller with a budget
-    // shorter than the provider's latency will trip the breaker for everyone
-    // else. Flagged to the orchestrator as a design question, not asserted as a
-    // defect — R4 §3.7 does not decide it either way.
+    // `isUnscored()` discards `CancelledError` because a caller withdrawal says
+    // nothing about provider health. A call-scope breach is the same kind of
+    // thing wearing a different code: ONE caller's own budget — `totalTimeoutMs`
+    // or a `deadlineAt` they supplied — running out across every provider and
+    // retry the call happened to make. Scoring it meant that a caller with a
+    // 50 ms deadline against a provider that reliably answers in 200 ms could
+    // trip the breaker and hand fail-fast errors to everyone else, for a
+    // provider that was never at fault.
+    //
+    // The ATTEMPT-scope timeout is still scored as a failure, and that
+    // distinction is the whole point: `attemptTimeoutMs` is the budget EVERY
+    // caller of that provider gets, so blowing it is real evidence. The test
+    // below this one, and `an attempt timeout counts against the breaker` in
+    // the breaker's own unit tests, pin that half.
     const provider = fakeProvider('p').alwaysSucceed('ok', 1_000);
     const handle = testContext({ provider });
     const composition = buildComposition({
@@ -468,7 +490,11 @@ describe('what a total-timeout breach does to the breaker', () => {
     // The breaker records on the unwind, which happens after the caller's
     // rejection has already been delivered.
     await drainMicrotasks();
-    expect(breakerView(breaker, 'p')?.state, 'the provider is now shut out').toBe('open');
+    expect(
+      breakerView(breaker, 'p')?.state,
+      'the caller ran out of time; that is not evidence about the provider',
+    ).toBe('closed');
+    expect(breakerView(breaker, 'p')?.consecutiveFailures).toBe(0);
     await composition.dispose();
   });
 

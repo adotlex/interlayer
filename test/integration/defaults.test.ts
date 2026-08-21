@@ -33,8 +33,15 @@ interface ChatReply {
   readonly by: string;
 }
 
+// `chat` is declared IDEMPOTENT here on purpose. `createLayer` now reads
+// `capability({ idempotent })` and wires it into the retry policy's
+// idempotency gate (R6 §2 rule 3: "the layer never retries a non-idempotent
+// capability unless told to"), so a contract that declares `false` and a test
+// that then asserts three attempts cannot both be right. This fixture used to
+// say `false` only because nothing read the flag. Every assertion below is
+// unchanged; the contract is what was wrong.
 const ai = defineContract({
-  chat: capability<ChatRequest, ChatReply>({ idempotent: false }),
+  chat: capability<ChatRequest, ChatReply>({ idempotent: true }),
 });
 
 function okProvider(id: string) {
@@ -289,28 +296,28 @@ describe('integration — the default rate limit (10 tokens, 10/s, per provider,
 });
 
 /* ------------------------------------------------------------------ *
- * 3. KNOWN DEFECTS — these two tests FAIL, deliberately
+ * 3. Two defects these tests were written to report, now FIXED
  * ------------------------------------------------------------------ */
 
-describe('integration — known defects in the assembled defaults', () => {
-  it('KNOWN DEFECT — an open breaker fails fast only AFTER buying a rate-limit token', async () => {
-    // `POLICY_ORDER` puts RateLimit OUTSIDE CircuitBreaker, so every call pays
-    // for a token before the breaker is even asked. Two consequences, and the
-    // second one is the bug:
+describe('integration — two defects in the assembled defaults', () => {
+  it('an open breaker fails fast WITHOUT buying a rate-limit token', async () => {
+    // `POLICY_ORDER` used to put RateLimit OUTSIDE CircuitBreaker, so every call
+    // paid for a token before the breaker was even asked. Two consequences, and
+    // the second one was the bug:
     //
-    //   1. A call the breaker rejects still DRAINS the provider's quota, even
+    //   1. A call the breaker rejects still DRAINED the provider's quota, even
     //      though no physical request was ever made. The limiter's own comment
     //      says tokens are never refunded because "the physical call has been
     //      made" — here it has not.
-    //   2. Once that quota is exhausted, the fail-fast path WAITS. In `'wait'`
-    //      mode — the default — a CIRCUIT_OPEN is delivered a full refill
-    //      interval late. A circuit breaker that sleeps before failing fast has
-    //      lost the only property it exists for: shedding load instantly. Under
-    //      the shipped defaults this arrives 100 ms late per call; with a
-    //      quota-shaped limiter (as configured here) it is a full second, and a
-    //      queue of such calls can burn the entire 30 s total budget.
+    //   2. Once that quota was exhausted, the fail-fast path WAITED. In `'wait'`
+    //      mode — the default — a CIRCUIT_OPEN arrived a full refill interval
+    //      late. A circuit breaker that sleeps before failing fast has lost the
+    //      only property it exists for: shedding load instantly. Under the
+    //      shipped defaults that was 100 ms late per call; with a quota-shaped
+    //      limiter (as configured here) a full second, and a queue of such calls
+    //      could burn the entire 30 s total budget.
     //
-    // Expected: CIRCUIT_OPEN at the instant the call was made.
+    // Fixed by `Retry > CircuitBreaker > RateLimit`; see `POLICY_ORDER`.
     const runtime = createFakeRuntime();
     const calls = counter();
     const layer = createLayer({
@@ -339,12 +346,12 @@ describe('integration — known defects in the assembled defaults', () => {
     await layer.close();
   });
 
-  it('KNOWN DEFECT — `capability({ idempotent: false })` does not stop retries', async () => {
+  it('`capability({ idempotent: false })` stops retries', async () => {
     // `CapabilityMeta.idempotent` is documented as "Safe to re-issue. Retry and
-    // routing read this". Retry does not read it: `createLayer` builds one
-    // retry policy from `resilience.retry` alone and never consults
+    // routing read this". Retry did NOT read it: `createLayer` built one retry
+    // policy from `resilience.retry` alone and never consulted
     // `capabilityMeta(contract, name)`, so `retryPolicy`'s `idempotent` option
-    // keeps its default of `true` for every capability in the contract.
+    // kept its default of `true` for every capability in the contract.
     //
     // R6 §2 rule 3 states the intended behaviour outright: "the layer never
     // retries a non-idempotent capability unless told to."
@@ -352,8 +359,8 @@ describe('integration — known defects in the assembled defaults', () => {
     // The scenario below is the exact case `passesIdempotencyGate` exists to
     // refuse — a NON-IDEMPOTENT write whose response never arrived. The gate's
     // rule for it is unconditional ("NEVER on a timeout: the write may have
-    // succeeded invisibly"), and it never runs. The charge is issued three
-    // times.
+    // succeeded invisibly"). Fixed by giving each capability its own retry
+    // instance in `createLayer`; the charge is now issued once.
     const runtime = createFakeRuntime();
     const charges = counter();
     const payments = defineContract({
@@ -385,6 +392,57 @@ describe('integration — known defects in the assembled defaults', () => {
     await rejectionOf(runtime, layer.call('charge', { amountCents: 4_999 }));
 
     expect(charges.count, 'a non-idempotent capability must be issued at most once').toBe(1);
+    await layer.close();
+  });
+
+  it('and stops them on an ordinary transient failure too, not only on a timeout', async () => {
+    // The gate is not timeout-specific: a non-idempotent capability retries
+    // ONLY on the connect-level failures the request provably never survived
+    // (`retryNonIdempotentOnConnectFailure`). A `TransportError` is not one of
+    // those — the request may well have reached the gateway — so the write is
+    // issued once. Pinned here because the shared `ai` contract in this file
+    // declares `chat` idempotent, so nothing else exercises the general rule
+    // through the facade.
+    const runtime = createFakeRuntime();
+    const charges = counter();
+    const payments = defineContract({
+      charge: capability<{ amountCents: number }, { receiptId: string }>({ idempotent: false }),
+      quote: capability<{ amountCents: number }, { feeCents: number }>({ idempotent: true }),
+    });
+    const quotes = counter();
+    const gateway = defineProvider(payments, {
+      id: 'gateway',
+      capabilities: {
+        charge: () => {
+          charges.bump();
+          return Promise.reject(new TransportError('gateway unreachable'));
+        },
+        quote: () => {
+          quotes.bump();
+          return Promise.reject(new TransportError('gateway unreachable'));
+        },
+      },
+    });
+    const layer = createLayer({
+      contract: payments,
+      providers: [gateway],
+      resilience: {
+        retry: { maxAttempts: 3, strategy: 'fixed', baseDelayMs: 10 },
+        timeout: false,
+        breaker: false,
+        rateLimit: false,
+      },
+      runtime,
+    });
+
+    await rejectionOf(runtime, layer.call('charge', { amountCents: 4_999 }));
+    expect(charges.count, 'non-idempotent: issued once').toBe(1);
+
+    // The control, on the SAME layer and the same retry configuration: an
+    // idempotent capability in the same contract still gets all three tries, so
+    // the gate is keyed on the capability and not on the layer.
+    await rejectionOf(runtime, layer.call('quote', { amountCents: 4_999 }));
+    expect(quotes.count, 'idempotent: the full retry budget').toBe(3);
     await layer.close();
   });
 });

@@ -68,15 +68,31 @@ export const DEFAULT_IS_FAILURE: (error: unknown) => boolean = () => true;
  * caller gives up would read as 100 % healthy. Neither, therefore: the outcome
  * is discarded and the half-open slot released ({@link BreakerEvent} `'ignore'`).
  *
- * A `TimeoutError` is deliberately NOT in this set. Our own attempt timeout
- * firing IS evidence about the provider, and it is exactly the evidence a
- * breaker exists to accumulate.
+ * An ATTEMPT-scope `TimeoutError` is deliberately NOT in this set. Our own
+ * attempt timeout firing IS evidence about the provider — the budget was ours,
+ * but it is the budget every caller of this provider gets, and blowing it is
+ * exactly the evidence a breaker exists to accumulate.
+ *
+ * A CALL-scope `TimeoutError` IS in this set, and that is a decision R4 §3.7
+ * does not make either way, so here is the reasoning. A call-scope breach is
+ * ONE caller's own budget expiring — `totalTimeoutMs`, or a `deadlineAt` they
+ * supplied — across every provider and every retry the call happened to make.
+ * It says the caller ran out of time, not that the provider is unhealthy: a
+ * request with a 50 ms deadline against a provider that reliably answers in
+ * 200 ms would trip the breaker and hand FAIL-FAST errors to every other caller
+ * of a provider that was never at fault. That is the same failure mode
+ * `CancelledError` is excluded for — a caller-side decision scored against a
+ * backend — and it arrives through the same door, because the total timeout
+ * aborts the signal the attempt inherits and so reaches this policy as an
+ * ordinary rejection. Scoring it as a SUCCESS would be the opposite error, so
+ * it is discarded, exactly like a cancellation.
  *
  * Not configurable, because the alternative is not a preference: no correct
  * breaker counts a caller's own withdrawal against a backend.
  */
 function isUnscored(error: unknown): boolean {
-  return hasCode(error, 'CANCELLED');
+  if (hasCode(error, 'CANCELLED')) return true;
+  return hasCode(error, 'TIMEOUT') && error.scope === 'call';
 }
 
 /**

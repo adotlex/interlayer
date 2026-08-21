@@ -49,6 +49,11 @@ export type {
   Capability,
   CapabilityName,
   Contract,
+  /**
+   * Named by `ProviderRecord.capabilities`, which is what `layer.providers` and
+   * every custom `Selector` are handed — squarely on the public path.
+   */
+  ErasedHandler,
   Handler,
   Handlers,
   HealthStatus,
@@ -65,7 +70,17 @@ export type {
   Registry,
   Selector,
 } from './core/types.ts';
-export type { CapabilityMeta, ProviderDefinition, RegistryOptions } from './registry/index.ts';
+export type {
+  CapabilityMeta,
+  /**
+   * Named by `ProviderDefinition.health`. Without it a consumer can pass a
+   * health probe but cannot declare a shared one and annotate it — and under
+   * `isolatedDeclarations` "cannot annotate" is "cannot re-export".
+   */
+  HealthProbe,
+  ProviderDefinition,
+  RegistryOptions,
+} from './registry/index.ts';
 export {
   capability,
   capabilityMeta,

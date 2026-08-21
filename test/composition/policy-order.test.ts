@@ -1,10 +1,21 @@
 /**
  * ORDERING, STRUCTURALLY — does `orderPolicies` / `policyStack` actually produce
- * the canonical nesting of R4 §5.6, and does `compose()` then nest it that way?
+ * the canonical nesting, and does `compose()` then nest it that way?
  *
  * ```
- *   TotalTimeout > Retry > RateLimit > CircuitBreaker > AttemptTimeout > call
+ *   TotalTimeout > Retry > CircuitBreaker > RateLimit > AttemptTimeout > call
  * ```
+ *
+ * CHANGED, DELIBERATELY: the breaker and the limiter used to be the other way
+ * round. R4 §5.6 settled `Retry > RateLimit` (a retry is a physical call and
+ * must be metered) and `Retry > Breaker` (every physical attempt is recorded);
+ * it never settled the pair. Putting the limiter outside meant a call the
+ * breaker was about to reject FIRST BOUGHT A TOKEN — draining quota for a
+ * request never made and, in the default `'wait'` mode, SLEEPING before failing
+ * fast, which is the one property a breaker exists for. Both of R4's stated
+ * constraints still hold: retry is still outside the limiter, and the breaker
+ * is still inside retry. See `POLICY_ORDER` in `src/core/policy.ts` for the
+ * full reasoning and the acknowledged cost.
  *
  * Everything here is deliberately declaration-order-hostile: every input array
  * is shuffled, and several are shuffled into the EXACT REVERSE of the canonical
@@ -35,12 +46,12 @@ import { attemptTimeout, totalTimeout } from '../../src/resilience/timeout/index
 import { testContext } from '../support/index.ts';
 import { buildComposition } from './harness.ts';
 
-/** The canonical order, written out once, from R4 §5.6 and the ASCII diagram. */
+/** The canonical order, written out once, from the ASCII diagram above. */
 const CANONICAL: readonly PolicyKind[] = [
   'total-timeout',
   'retry',
-  'rate-limit',
   'circuit-breaker',
+  'rate-limit',
   'attempt-timeout',
   'custom',
 ];
@@ -48,8 +59,8 @@ const CANONICAL: readonly PolicyKind[] = [
 /** The attempt-scope half of it — what `createRouter` composes. */
 const CANONICAL_ATTEMPT: readonly PolicyKind[] = [
   'retry',
-  'rate-limit',
   'circuit-breaker',
+  'rate-limit',
   'attempt-timeout',
   'custom',
 ];
@@ -81,7 +92,7 @@ function probe<Ctx>(
  * ------------------------------------------------------------------ */
 
 describe('POLICY_ORDER / POLICY_SCOPE — the declared contract', () => {
-  it('is exactly the canonical nesting of R4 §5.6, outermost first', () => {
+  it('is exactly the canonical nesting, outermost first', () => {
     expect([...POLICY_ORDER]).toEqual([...CANONICAL]);
   });
 
@@ -131,12 +142,12 @@ describe('orderPolicies', () => {
   it('sorts an interleaved shuffle into the canonical order', () => {
     const log: string[] = [];
     const shuffled: readonly PolicyKind[] = [
-      'circuit-breaker',
+      'rate-limit',
       'custom',
       'total-timeout',
       'attempt-timeout',
       'retry',
-      'rate-limit',
+      'circuit-breaker',
     ];
     const policies = shuffled.map((kind) => probe<AttemptContext>(kind, POLICY_SCOPE[kind], log));
     expect(orderPolicies(policies).map((p) => p.kind)).toEqual([...CANONICAL]);
@@ -235,15 +246,15 @@ describe('policyStack + compose — the nesting that results', () => {
     expect(value).toBe('ok');
     expect(log).toEqual([
       '>retry',
-      '>rate-limit',
       '>circuit-breaker',
+      '>rate-limit',
       '>attempt-timeout',
       '>custom',
       '=provider',
       '<custom',
       '<attempt-timeout',
-      '<circuit-breaker',
       '<rate-limit',
+      '<circuit-breaker',
       '<retry',
     ]);
   });
@@ -322,19 +333,19 @@ describe('the five shipped policy factories', () => {
     expect(total.scope).toBe(POLICY_SCOPE[total.kind]);
   });
 
-  it('sort from a reversed declaration into Retry > RateLimit > Breaker > AttemptTimeout', () => {
+  it('sort from a reversed declaration into Retry > Breaker > RateLimit > AttemptTimeout', () => {
     // Declared innermost-first — the exact reverse of the required nesting.
     const declared: Policy<AttemptContext, unknown>[] = [
       attemptTimeout({ attemptTimeoutMs: 10 }),
-      circuitBreaker({}),
       rateLimit({ key: 'p' }),
+      circuitBreaker({}),
       retryPolicy({ maxAttempts: 2 }),
     ];
     expect(orderPolicies(declared).map((p) => p.kind)).toEqual([...CANONICAL_ATTEMPT].slice(0, 4));
     expect(orderPolicies(declared).map((p) => p.name)).toEqual([
       'retry(full, 2)',
-      'rate-limit(p)',
       'circuit-breaker',
+      'rate-limit(p)',
       'attempt-timeout(10ms)',
     ]);
   });
@@ -346,9 +357,9 @@ describe('the five shipped policy factories', () => {
       rateLimit({ key: 'anthropic' }),
     ];
     expect(orderPolicies(declared).map((p) => p.name)).toEqual([
+      'circuit-breaker',
       'rate-limit(openai)',
       'rate-limit(anthropic)',
-      'circuit-breaker',
     ]);
   });
 
@@ -366,8 +377,8 @@ describe('the five shipped policy factories', () => {
     ).not.toEqual([...CANONICAL_ATTEMPT].slice(0, 4));
     expect(composition.attemptKinds).toEqual([
       'retry',
-      'rate-limit',
       'circuit-breaker',
+      'rate-limit',
       'attempt-timeout',
     ]);
     expect(composition.callKinds).toEqual(['total-timeout']);

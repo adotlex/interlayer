@@ -62,11 +62,13 @@ const PUBLIC_API: readonly string[] = [
   'DEFAULTS',
   'DeadlineHandle',
   'Emitter',
+  'ErasedHandler',
   'ErrorCode',
   'ErrorContext',
   'EventMap',
   'Handler',
   'Handlers',
+  'HealthProbe',
   'HealthStatus',
   'ImplementedBy',
   'ImplementedCapabilities',
@@ -190,8 +192,17 @@ const PUBLIC_API: readonly string[] = [
  * is the whole guard — it converts "nobody thought about it" into a red test.
  */
 const WITHHELD: Readonly<Record<string, readonly string[]>> = {
-  /** Barrel bullet 1 — the type-erasure seam. One call site, in the registry. */
-  erasureSeam: ['ErasedHandler', 'ProviderLike', 'ResolvedRegistration', 'toProviderRecord'],
+  /**
+   * Barrel bullet 1 — the type-erasure seam. One call site, in the registry.
+   *
+   * `ErasedHandler` used to be here and is now PUBLISHED: it is the value type
+   * of `ProviderRecord.capabilities`, and `ProviderRecord` is what
+   * `layer.providers` and every custom `Selector` are handed. Withholding the
+   * name did not hide the seam, it just stopped consumers writing down a type
+   * the library hands them. The *functions* that perform the erasure stay
+   * withheld, which is what the bullet is actually protecting.
+   */
+  erasureSeam: ['ProviderLike', 'ResolvedRegistration', 'toProviderRecord'],
 
   /** Barrel bullet 2 — the composition machinery `createLayer` is made of. */
   composition: [
@@ -293,8 +304,6 @@ const WITHHELD: Readonly<Record<string, readonly string[]>> = {
    *  - `supports` — the standalone `(provider, name) => boolean` helper.
    *    `Layer.supports()` is the consumer-facing form, and the public
    *    `implementedCapabilities` rebuilds this in one line.
-   *  - `HealthProbe` — SEE THE FAILING TEST BELOW. Listed here so the inventory
-   *    balances, not because withholding it is correct.
    *  - `RETRY_FAILURES_KEY` / `RetryFailureRecord` / `retryFailures` — the retry
    *    loop's per-call failure record. `retry.ts` documents it as being for
    *    "middleware and telemetry", and `layer.use(middleware)` is public, so
@@ -303,7 +312,6 @@ const WITHHELD: Readonly<Record<string, readonly string[]>> = {
    */
   auditedButUndocumented: [
     'AnyContract',
-    'HealthProbe',
     'RETRY_FAILURES_KEY',
     'RetryFailureRecord',
     'byHints',
@@ -429,14 +437,26 @@ describe('no internal leakage', () => {
 
   it('publishes no name matching an internal naming convention', () => {
     // Belt and braces for a future export: nothing prefixed `_`, nothing
-    // suffixed `Internal`, no `Erased*`, no `Any*` except the documented
-    // `AnyInterlayerError` (which is the public union of the error classes).
+    // suffixed `Internal`, no `Erased*` and no `Any*` — each with exactly one
+    // DELIBERATE exception, listed here so a genuinely accidental leak still
+    // fails this test:
+    //
+    //   `AnyInterlayerError` — the public union of the error classes.
+    //   `ErasedHandler`      — the value type of `ProviderRecord.capabilities`.
+    //                          `ProviderRecord` is public (it is what
+    //                          `layer.providers` and every `Selector` receive),
+    //                          so a consumer writing a selector has to be able
+    //                          to name what they are handed. The heuristic is
+    //                          about names nobody decided on; this one was
+    //                          decided on.
+    const intentional = new Set(['AnyInterlayerError', 'ErasedHandler']);
     const suspicious = rootExports.filter(
       (name) =>
-        name.startsWith('_') ||
-        name.endsWith('Internal') ||
-        name.startsWith('Erased') ||
-        (name.startsWith('Any') && name !== 'AnyInterlayerError'),
+        !intentional.has(name) &&
+        (name.startsWith('_') ||
+          name.endsWith('Internal') ||
+          name.startsWith('Erased') ||
+          name.startsWith('Any')),
     );
     expect(suspicious).toEqual([]);
   });
@@ -472,15 +492,5 @@ describe('the published surface is self-contained', () => {
     const accepted = new Set(['AnyContract']);
     const leaks = unreachablePublicTypes().filter((leak) => !accepted.has(leak.type));
     expect(leaks).toEqual([]);
-  });
-
-  it('does not regress beyond the two known holes', () => {
-    // Guard rail while BUG-T6-02 is open: the set must not GROW. Delete this
-    // test together with the two names once the barrel exports them.
-    const accepted = new Set(['AnyContract']);
-    const leaks = unreachablePublicTypes()
-      .filter((leak) => !accepted.has(leak.type))
-      .map((leak) => leak.type);
-    expect(leaks).toEqual(['ErasedHandler', 'HealthProbe']);
   });
 });

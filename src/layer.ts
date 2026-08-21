@@ -18,8 +18,8 @@
  *           └── for each candidate, in selector order:
  *               ATTEMPT STACK  compose<AttemptContext>   once per provider
  *               ├── Retry                           re-entrant: calls next() N times
- *               ├── RateLimit                       one token per PHYSICAL call
  *               ├── CircuitBreaker                  sees every physical call
+ *               ├── RateLimit                       one token per PHYSICAL call
  *               ├── AttemptTimeout                  bounds ONE provider call
  *               └── TERMINAL: provider.capabilities.get(cap)(input, ctx)
  * ```
@@ -28,13 +28,14 @@
  * `policyStack()` in `src/core/policy.ts` own it (R4 §5.6, settled), so a
  * policy added later lands in the right place without this file changing.
  *
- * ── PER-PROVIDER STATE ────────────────────────────────────────────────────
+ * ── PER-PROVIDER / PER-CAPABILITY STATE ───────────────────────────────────
  *
  * A dead provider must never fail-fast a healthy sibling in the same fallback
  * chain. The breaker keys its own state on `ctx.provider.id` internally, so one
  * instance serves every provider. The rate limiter does NOT — it owns a single
  * token bucket — so this file gives each provider its own limiter through
- * {@link perProviderPolicy}.
+ * {@link keyedPolicy}, which also gives each CAPABILITY its own retry policy so
+ * that `capability({ idempotent: false })` reaches the idempotency gate.
  *
  * ── TYPE ERASURE ──────────────────────────────────────────────────────────
  *
@@ -53,6 +54,7 @@ import {
   TimeoutError,
   toInterlayerError,
   UnsupportedCapabilityError,
+  ValidationError,
 } from './core/errors.ts';
 import { createEmitter } from './core/events.ts';
 import {
@@ -92,10 +94,15 @@ import type {
   Selector,
   Unsubscribe,
 } from './core/types.ts';
-import { createRegistry } from './registry/index.ts';
+import { capabilityMeta, createRegistry } from './registry/index.ts';
 import { circuitBreaker } from './resilience/circuit-breaker/index.ts';
 import { rateLimit } from './resilience/rate-limit/index.ts';
-import { isTransient, resolveRetryOptions, retryPolicy } from './resilience/retry/index.ts';
+import {
+  isTransient,
+  passesIdempotencyGate,
+  resolveRetryOptions,
+  retryPolicy,
+} from './resilience/retry/index.ts';
 import { attemptTimeout, totalTimeout } from './resilience/timeout/index.ts';
 import { createRouter, type PolicyRouter } from './routing/index.ts';
 
@@ -182,40 +189,53 @@ export type ProviderIds<
  * ------------------------------------------------------------------ */
 
 /**
- * Gives every provider its own instance of an attempt policy.
+ * One instance of an attempt policy per KEY read off the attempt context.
  *
- * The circuit breaker does its own per-key bookkeeping, but the rate limiter
- * owns exactly one token bucket, so a single shared limiter would meter the
- * SUM of every backend's traffic against one quota — and a fallback chain would
- * spend openai's tokens discovering that anthropic is busy. One limiter per
- * provider is the only correct arrangement.
+ * Two policies need this, for two different reasons.
+ *
+ * PER PROVIDER (the rate limiter). The circuit breaker does its own per-key
+ * bookkeeping, but the limiter owns exactly one token bucket, so a single
+ * shared limiter would meter the SUM of every backend's traffic against one
+ * quota — and a fallback chain would spend openai's tokens discovering that
+ * anthropic is busy. One limiter per provider is the only correct arrangement.
+ *
+ * PER CAPABILITY (retry). `capability({ idempotent: false })` has to reach the
+ * retry policy, and a layer has ONE default stack shared by every capability,
+ * so the flag cannot be baked into a single policy instance. Splitting the
+ * whole stack per capability would also split the breaker and the limiter,
+ * which would silently change quota accounting; splitting only retry does not,
+ * because a retry policy holds no state between calls.
  *
  * Instances are created lazily on first use and disposed together.
  */
-function perProviderPolicy(
+function keyedPolicy(
   name: string,
-  make: (providerId: string) => Policy<AttemptContext, unknown>,
+  keyOf: (ctx: AttemptContext) => string,
+  make: (key: string) => Policy<AttemptContext, unknown>,
 ): Policy<AttemptContext, unknown> {
   const instances = new Map<string, Policy<AttemptContext, unknown>>();
-  const forProvider = (providerId: string): Policy<AttemptContext, unknown> => {
-    const existing = instances.get(providerId);
+  const forKey = (key: string): Policy<AttemptContext, unknown> => {
+    const existing = instances.get(key);
     if (existing !== undefined) return existing;
-    const created = make(providerId);
-    instances.set(providerId, created);
+    const created = make(key);
+    instances.set(key, created);
     return created;
   };
 
   // `kind` and `scope` are read off one throwaway instance, so this wrapper
-  // never has to be told where it sorts in `POLICY_ORDER`.
+  // never has to be told where it sorts in `POLICY_ORDER`. Building it eagerly
+  // also keeps construction-time validation at construction time (R4 §1.7): a
+  // `maxAttempts: 0` still raises its `RangeError` from `createLayer`, not from
+  // the first call.
   const probe = make('<probe>');
   return definePolicy<AttemptContext, unknown>({
     kind: probe.kind,
     name,
     scope: probe.scope,
-    execute: (ctx, next) => forProvider(ctx.provider.id).execute(ctx, next),
+    execute: (ctx, next) => forKey(keyOf(ctx)).execute(ctx, next),
     describe: (): Readonly<Record<string, unknown>> =>
       Object.fromEntries(
-        [...instances].map(([id, policy]) => [id, policy.describe?.() ?? {}] as const),
+        [...instances].map(([key, policy]) => [key, policy.describe?.() ?? {}] as const),
       ),
     dispose: async (): Promise<void> => {
       await disposePolicies([...instances.values()]);
@@ -227,7 +247,12 @@ function perProviderPolicy(
 /** What the terminal needs in order to predict `willRetry` on the event. */
 interface RetryAdvice {
   readonly maxAttempts: number;
-  readonly isRetryable: (error: unknown, attempt: number) => boolean;
+  /**
+   * Carries the capability because the idempotency gate is per capability —
+   * see {@link StackInput.isIdempotent}. Without it the advisory `willRetry`
+   * would promise a retry the policy is about to refuse.
+   */
+  readonly isRetryable: (error: unknown, attempt: number, capability: string) => boolean;
 }
 
 /** One capability's fully wired pipeline. */
@@ -244,6 +269,11 @@ interface StackInput {
   readonly selector: Selector | undefined;
   readonly maxProviders: number | undefined;
   readonly shouldFallback: ((error: AnyInterlayerError, ctx: CallContext) => boolean) | undefined;
+  /**
+   * Reads `capability({ idempotent })` off the contract. Undeclared means
+   * `true`: a contract that says nothing keeps the historical default.
+   */
+  readonly isIdempotent: (capability: string) => boolean;
 }
 
 /**
@@ -265,15 +295,39 @@ function buildStack(input: StackInput): Stack {
   let retry: RetryAdvice | undefined;
   if (resilience.retry !== false) {
     const options: RetryOptions = resilience.retry ?? {};
-    attemptPolicies.push(retryPolicy(options));
+    // `CapabilityMeta.idempotent` is documented as "Retry and routing read
+    // this", and R6 §2 rule 3 says the layer never retries a non-idempotent
+    // capability unless told to. Nothing used to read it: one retry policy was
+    // built from `resilience.retry` alone, so `idempotent` kept its default of
+    // `true` for every capability and `passesIdempotencyGate`'s "NEVER on a
+    // timeout" rule never ran — a non-idempotent payment whose response never
+    // arrived was charged `maxAttempts` times. One retry instance per
+    // capability closes that.
+    attemptPolicies.push(
+      keyedPolicy(
+        'retry(per-capability)',
+        (ctx) => ctx.capability,
+        (capability) => retryPolicy({ ...options, idempotent: input.isIdempotent(capability) }),
+      ),
+    );
     const resolved = resolveRetryOptions(options);
-    retry = { maxAttempts: resolved.maxAttempts, isRetryable: options.isRetryable ?? isTransient };
+    const predicate = options.isRetryable ?? isTransient;
+    retry = {
+      maxAttempts: resolved.maxAttempts,
+      isRetryable: (error, attempt, capability) =>
+        passesIdempotencyGate(error, {
+          idempotent: input.isIdempotent(capability),
+          retryNonIdempotentOnConnectFailure: resolved.retryNonIdempotentOnConnectFailure,
+        }) && predicate(error, attempt),
+    };
   }
   if (resilience.rateLimit !== false) {
     const options = resilience.rateLimit ?? {};
     attemptPolicies.push(
-      perProviderPolicy('rate-limit(per-provider)', (providerId) =>
-        rateLimit({ ...options, key: providerId }),
+      keyedPolicy(
+        'rate-limit(per-provider)',
+        (ctx) => ctx.provider.id,
+        (providerId) => rateLimit({ ...options, key: providerId }),
       ),
     );
   }
@@ -390,10 +444,14 @@ export function createLayer<
   for (const provider of config.providers) registry.register(provider);
 
   const middleware: CallMiddleware[] = [];
+  /** Every unsubscribe closure `layer.on()` handed out. See `close()`. */
+  const ownSubscriptions = new Set<Unsubscribe>();
   const stackInput = {
     selector: config.selector,
     maxProviders: config.maxProviders,
     shouldFallback: config.shouldFallback,
+    isIdempotent: (capability: string): boolean =>
+      capabilityMeta(config.contract, capability)?.idempotent ?? true,
   };
   const defaultStack: Stack = buildStack({ resilience: config.resilience ?? {}, ...stackInput });
   /** Only capabilities with a `perCapability` override get their own stack. */
@@ -448,7 +506,25 @@ export function createLayer<
       attempt: ctx.attempt,
       at: startedAt,
     });
-    return handler(ctx.input, ctx).then(
+    // A handler that throws SYNCHRONOUSLY never reaches `.then`, so the attempt
+    // used to emit `attempt:start` and then nothing at all — no success, no
+    // failure, no `durationMs`. The call itself was unaffected (`compose()`
+    // turns the throw into a rejection at the terminal), which is exactly what
+    // made it invisible everywhere except the event stream: every latency
+    // histogram and error-rate metric silently lost the attempt, and every
+    // trace span built on the start/finish pair opened and never closed. Any
+    // non-`async` function that validates before it dispatches — `if (!apiKey)
+    // throw …` — does this. `compose()` and `runWithTimeout` both guard it
+    // already; this was the one place that did not. `Promise.resolve(p)`
+    // returns `p` itself when it is already a native promise, so the normal
+    // path gains no extra microtask and no event ordering shifts.
+    let invoked: Promise<unknown>;
+    try {
+      invoked = Promise.resolve(handler(ctx.input, ctx));
+    } catch (thrown) {
+      invoked = Promise.reject(thrown);
+    }
+    return invoked.then(
       (value) => {
         events.emit('attempt:success', {
           callId: ctx.callId,
@@ -478,7 +554,7 @@ export function createLayer<
           willRetry:
             advice !== undefined &&
             ctx.attempt < advice.maxAttempts &&
-            advice.isRetryable(error, ctx.attempt),
+            advice.isRetryable(error, ctx.attempt, ctx.capability),
           at: ctx.runtime.now(),
         });
         throw raw;
@@ -501,6 +577,42 @@ export function createLayer<
     const stack = stackFor(capability);
     const callId = runtime.uuid();
     const startedAt = runtime.now();
+
+    // `CallOptions.providers` is the one routing input the type system cannot
+    // check: `CallOptions` is shared by every layer regardless of its `Ids`
+    // union, so a misspelled id compiles. `byHints()` then dropped it in
+    // SILENCE, which is harmless only when every id is wrong (the pool empties
+    // and the router raises NO_PROVIDER). The dangerous case is a partial typo:
+    // `{ providers: ['openai', 'anthropc'] }` pinned ONE provider, and the
+    // caller kept believing in a fallback they no longer had, forever, with
+    // nothing logged. An id no provider answers to is a caller mistake, so it
+    // fails loudly here. Ids that ARE registered but filter down to nothing —
+    // wrong capability, disabled, narrowed by `only()` or by `tags` — still
+    // produce NO_PROVIDER from the router: that is a routing outcome, not a typo.
+    const requested = options.providers;
+    if (requested !== undefined) {
+      const unknown = requested.filter((id) => registry.get(id) === undefined);
+      if (unknown.length > 0) {
+        const known = registry.list().map((record) => record.id);
+        throw new ValidationError(
+          `Unknown provider id(s) in the "providers" routing hint: ${unknown.join(', ')}. ` +
+            `Registered: ${known.length === 0 ? '<none>' : known.join(', ')}`,
+          requested.flatMap((id, index) =>
+            unknown.includes(id)
+              ? [
+                  {
+                    path: ['providers', index],
+                    message: `no provider with id "${id}" is registered`,
+                    code: 'unknown_provider',
+                  },
+                ]
+              : [],
+          ),
+          { capability, callId },
+        );
+      }
+    }
+
     const hints: CallOptions = {
       ...options,
       ...(pinned === undefined ? {} : { providers: intersectPins(pinned, options.providers) }),
@@ -667,7 +779,15 @@ export function createLayer<
       ): Unsubscribe {
         // The emitter hands back its own unsubscribe closure, which is what
         // kills the "you must keep the same function reference for off()" bug.
-        return events.on(event, fn);
+        // It is recorded so `close()` can remove exactly what this layer added
+        // and nothing else.
+        const off = events.on(event, fn);
+        const unsubscribe = (): void => {
+          ownSubscriptions.delete(unsubscribe);
+          off();
+        };
+        ownSubscriptions.add(unsubscribe);
+        return unsubscribe;
       },
 
       use(fn: CallMiddleware): typeof layer {
@@ -682,7 +802,16 @@ export function createLayer<
         for (const stack of overrides.values()) await stack.dispose();
         overrides.clear();
         await registry.dispose();
-        events.removeAllListeners();
+        // ONLY what this layer subscribed. `LayerConfig.events` is documented as
+        // shareable across layers ("fan every event into one sink"), and
+        // `removeAllListeners()` with no argument cleared every listener and
+        // every wildcard on the emitter it was HANDED — including subscriptions
+        // it never made. One layer shutting down (a tenant going away, a flag
+        // flipping) therefore blinded the shared metrics sink for everything
+        // still serving, silently. An emitter a layer was given is not its to
+        // empty.
+        for (const off of [...ownSubscriptions]) off();
+        ownSubscriptions.clear();
       },
 
       [Symbol.asyncDispose](): Promise<void> {
