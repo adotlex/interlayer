@@ -71,6 +71,14 @@ class Settings(BaseModel):
     redact: bool = False
     """Emit pseudonymous stable ids instead of names, for sharing results."""
 
+    include_speculative: bool = False
+    """Render rows whose confidence is below the speculative floor.
+
+    Off by default. A near-zero-confidence row is a name with no evidence behind
+    it, and the report is a file the operator forwards to other people -- putting
+    someone there on no evidence is the harm this tool is most likely to cause.
+    """
+
     # --- entity resolution (Wave 1 / Agent 4, empirically calibrated) -------
     match_accept: float = 90.0
     """rapidfuzz WRatio at/above which a firm match is accepted. Top of a flat plateau."""
@@ -124,6 +132,15 @@ class Settings(BaseModel):
         return self
 
     # --- artifact paths ----------------------------------------------------
+    @property
+    def email_mode(self) -> str:
+        """How e-mail addresses are handled, in one word, for display and audit.
+
+        Surfaced rather than derived at each call site so the report header and
+        the run manifest cannot drift from what ingest actually did.
+        """
+        return "hash" if self.keep_emails else "drop"
+
     def artifact(self, name: str) -> Path:
         """Resolve an artifact filename inside the configured artifact directory."""
         return self.artifact_dir / name

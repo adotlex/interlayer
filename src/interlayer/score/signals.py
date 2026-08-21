@@ -275,25 +275,34 @@ def cluster_stats(
     """Mean non-seed PPR per cluster, plus the counts that explain it.
 
     Mean and not sum: summing ranks the biggest cluster first regardless of
-    proximity. Non-seed and not all members: a cluster full of Jane Street people
-    scores high on its own seeds, which tells the operator nothing they did not
-    already know.
+    proximity. Non-seed and not all members: in a mixed cluster, the seeds' own
+    mass says nothing the operator does not already know, and letting it count
+    would rank a cluster by how many targets it contains rather than by how well
+    it reaches them.
+
+    A cluster with **no** non-seed members is the exception, and getting it wrong
+    was a real defect: the mean over an empty set is not zero, it is undefined,
+    and scoring it zero sent a cluster composed entirely of target-firm employees
+    to the bottom of the ranking. That cluster is the most relevant object the
+    tool can produce -- these are the operator's own connections who work at the
+    target. With no non-seeds there is also nothing to protect against, so the
+    mean falls back to all members.
     """
+
+    def _mean(vector: Mapping[str, float], pool: Sequence[str], fallback: Sequence[str]) -> float:
+        chosen = pool or fallback
+        if not chosen:
+            return 0.0
+        return round(sum(vector.get(m, 0.0) for m in chosen) / len(chosen), 12)
+
     unranked: list[ClusterStats] = []
     for cluster in clusters:
         members = list(cluster.member_ids)
         nonseeds = [m for m in members if m not in seeds]
-        mean = (
-            round(sum(ppr.get(m, 0.0) for m in nonseeds) / len(nonseeds), 12) if nonseeds else 0.0
-        )
-        per_firm = {}
-        for firm in sorted(ppr_by_firm):
-            vector = ppr_by_firm[firm]
-            per_firm[firm] = (
-                round(sum(vector.get(m, 0.0) for m in nonseeds) / len(nonseeds), 12)
-                if nonseeds
-                else 0.0
-            )
+        mean = _mean(ppr, nonseeds, members)
+        per_firm = {
+            firm: _mean(ppr_by_firm[firm], nonseeds, members) for firm in sorted(ppr_by_firm)
+        }
         adjacent = sum(
             1
             for m in nonseeds

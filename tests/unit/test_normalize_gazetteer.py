@@ -386,10 +386,7 @@ def test_every_positive_alias_is_in_the_exact_index(gaz: Gazetteer) -> None:
     for entity in gaz.entities.values():
         for alias in (*entity.aliases, entity.canonical_name):
             quarantined = {
-                q
-                for weak in entity.weak_aliases
-                for q in (norm(weak), norm_raw(weak))
-                if q
+                q for weak in entity.weak_aliases for q in (norm(weak), norm_raw(weak)) if q
             }
             for form in (norm(alias), norm_raw(alias)):
                 if not form:

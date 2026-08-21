@@ -64,10 +64,17 @@ def approx_dates(draw: st.DrawFn) -> ApproxDate:
 
 
 @st.composite
-def affiliations(draw: st.DrawFn, *, org: str | None = None, ordered: bool = True) -> Affiliation:
+def affiliations(draw: st.DrawFn, *, org: str | None = None) -> Affiliation:
+    """Generate a valid Affiliation.
+
+    Dates are always ordered because the model now rejects a reversed pair. The
+    strategy used to offer an unordered mode to exercise what happened when one
+    slipped through; that state is unconstructible, so generating it only
+    produced ValidationErrors during the draw.
+    """
     start = draw(st.none() | approx_dates())
     end = draw(st.none() | approx_dates())
-    if ordered and start is not None and end is not None:
+    if start is not None and end is not None:
         start, end = sorted((start, end), key=lambda d: d.span_start)
     return Affiliation(
         person_id=draw(ids),
@@ -352,7 +359,7 @@ def test_trailing_slashes_and_query_strings_never_change_a_person_id(slug: str) 
 
 
 @props
-@given(a=affiliations(ordered=False), b=affiliations(ordered=False))
+@given(a=affiliations(), b=affiliations())
 def test_overlaps_is_symmetric(a: Affiliation, b: Affiliation) -> None:
     assert a.overlaps(b) == b.overlaps(a)
 

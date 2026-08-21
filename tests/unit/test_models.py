@@ -455,14 +455,12 @@ def test_current_affiliation_may_not_carry_an_end_date() -> None:
 
 
 def test_affiliation_end_may_not_precede_start() -> None:
-    """``Position`` and ``Education`` both guard this; ``Affiliation`` does not.
+    """``Affiliation`` now guards this, as ``Position`` and ``Education`` do.
 
-    The consequence is not cosmetic: a reversed-date affiliation does not
-    overlap *itself*, so co-tenure stops being reflexive and the graph stage's
-    pairwise filter silently drops the person.
+    The consequence of not guarding it was not cosmetic: a reversed-date
+    affiliation does not overlap *itself*, so co-tenure stopped being reflexive
+    and the graph stage's pairwise filter silently dropped the person.
     """
-    reversed_dates = aff(y(2021), y(2019))
-    assert reversed_dates.overlaps(reversed_dates), "reversed dates break overlap reflexivity"
     with pytest.raises(ValidationError):
         aff(y(2021), y(2019))
 

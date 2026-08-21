@@ -232,6 +232,7 @@ def test_rerunning_an_upstream_stage_then_a_downstream_one_works(workspace: Path
     assert (artifacts / "report.html").read_bytes() == before
 
 
+@pytest.mark.slow
 def test_rerunning_the_whole_pipeline_in_place_is_stable(workspace: Path) -> None:
     run_stages(workspace, ORDER)
     artifacts = workspace / "artifacts"

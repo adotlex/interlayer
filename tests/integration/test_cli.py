@@ -93,10 +93,11 @@ def test_the_command_list_matches_the_stage_list() -> None:
 def test_no_arguments_prints_help_and_exits_zero() -> None:
     """A bare invocation is a request for help, not a usage error.
 
-    ``cli._root`` explicitly handles ``ctx.invoked_subcommand is None`` by
-    printing the help and raising ``typer.Exit(0)`` -- but ``Typer(...,
-    no_args_is_help=True)`` short-circuits first and exits 2, leaving that branch
-    unreachable. The help text does print; only the code is wrong.
+    ``cli._root`` handles ``ctx.invoked_subcommand is None`` by printing the help
+    and raising ``typer.Exit(0)``. The trap this pins down is ``Typer(...,
+    no_args_is_help=True)``: it intercepts before the root callback and exits 2,
+    printing the same help text, which makes the regression invisible to any
+    assertion that only looks at output.
     """
     result = cli()
     assert "Usage: interlayer" in result.output

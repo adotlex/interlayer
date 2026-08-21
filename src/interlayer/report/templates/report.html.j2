@@ -336,6 +336,7 @@ footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
     <span><b>run</b> {{ run_id }}</span>
     <span><b>seed</b> {{ seed }}</span>
     <span><b>mode</b> {{ 'redacted' if redact else 'identified' }}</span>
+    <span><b>e-mail</b> {{ email_mode }}</span>
     <span><b>tool</b> {{ tool_version }}</span>
     <span><b>schema</b> {{ schema_version }}</span>
     <span>run timestamp and input hashes: manifest.json</span>
@@ -477,6 +478,15 @@ footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
 </section>
 
 {# --------------------------------------------------------- speculative --- #}
+{% if speculative_withheld %}
+<section id="speculative">
+  <p class="note">{{ speculative_withheld }} further
+  {{ 'person is' if speculative_withheld == 1 else 'people are' }} below the 0.30 confidence
+  floor and {{ 'is' if speculative_withheld == 1 else 'are' }} not shown. At that level the
+  signal is indistinguishable from noise, and a name in a list acquires weight it has not
+  earned. Pass <code>--include-speculative</code> to render them.</p>
+</section>
+{% endif %}
 {% if speculative_rows %}
 <section id="speculative">
   <details>

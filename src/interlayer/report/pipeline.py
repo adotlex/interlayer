@@ -297,11 +297,18 @@ def _write_manifest(
         stage_versions={
             "report": REPORT_STAGE_VERSION,
             "schema": SCHEMA_VERSION,
-            # RunManifest has no field for the redaction mode or for a digest
-            # over the stage's own inputs (both required by research P-20), and
-            # models.py is scaffold-owned. Recorded here rather than dropped.
+            # RunManifest models none of these as first-class fields. They are
+            # recorded here rather than dropped: an audit needs to read, in the
+            # clear, how e-mail addresses were handled and which gazetteer
+            # decided who counts as a target -- config_sha256 covers both
+            # cryptographically but tells a reader nothing.
             "report.mode": mode,
             "report.inputs_sha256": inputs_sha,
+            "report.emails": cfg.email_mode,
+            "report.include_speculative": str(cfg.include_speculative).lower(),
+            "gazetteer_sha256": (
+                sha256_file(cfg.gazetteer) if cfg.gazetteer.is_file() else "missing"
+            ),
         },
         counts={**{k: int(v) for k, v in sorted(counts.items())}, "report_bytes": report_bytes},
     )

@@ -27,7 +27,9 @@ __all__ = ["app", "main"]
 app = typer.Typer(
     name="interlayer",
     help="Map your LinkedIn network against target firms.",
-    no_args_is_help=True,
+    # Deliberately NOT no_args_is_help: that intercepts before the root callback
+    # and exits 2. Asking for a program with no arguments is not a usage error,
+    # so the callback prints help and exits 0.
     add_completion=False,
 )
 console = Console(stderr=True)
@@ -81,6 +83,7 @@ def _settings(
     input_csv: Path | None = None,
     seed: int | None = None,
     redact: bool | None = None,
+    include_speculative: bool | None = None,
 ) -> Settings:
     try:
         return load_settings(
@@ -89,6 +92,7 @@ def _settings(
             input_csv=input_csv,
             seed=seed,
             redact=redact,
+            include_speculative=include_speculative,
         )
     except InterlayerError as exc:
         console.print(f"[red]configuration error:[/] {exc}")
@@ -98,6 +102,13 @@ def _settings(
 ConfigOpt = Annotated[Path | None, typer.Option("--config", "-c", help="YAML settings file.")]
 ArtifactOpt = Annotated[
     Path | None, typer.Option("--artifact-dir", "-a", help="Where artifacts are written.")
+]
+SpeculativeOpt = Annotated[
+    bool | None,
+    typer.Option(
+        "--include-speculative/--no-include-speculative",
+        help="Render rows with almost no evidence behind them. Off by default.",
+    ),
 ]
 SeedOpt = Annotated[int | None, typer.Option("--seed", help="Global determinism seed.")]
 RedactOpt = Annotated[
@@ -167,10 +178,16 @@ def score(config: ConfigOpt = None, artifact_dir: ArtifactOpt = None) -> None:
 
 @app.command()
 def report(
-    config: ConfigOpt = None, artifact_dir: ArtifactOpt = None, redact: RedactOpt = None
+    config: ConfigOpt = None,
+    artifact_dir: ArtifactOpt = None,
+    redact: RedactOpt = None,
+    include_speculative: SpeculativeOpt = None,
 ) -> None:
     """Render the self-contained HTML report."""
-    _run_stage("report", _settings(config, artifact_dir, redact=redact))
+    _run_stage(
+        "report",
+        _settings(config, artifact_dir, redact=redact, include_speculative=include_speculative),
+    )
 
 
 @app.command()
@@ -182,10 +199,11 @@ def run(
     artifact_dir: ArtifactOpt = None,
     seed: SeedOpt = None,
     redact: RedactOpt = None,
+    include_speculative: SpeculativeOpt = None,
 ) -> None:
     """Run every stage end to end."""
     console.print(FIRST_RUN_NOTICE)
-    cfg = _settings(config, artifact_dir, input_csv, seed, redact)
+    cfg = _settings(config, artifact_dir, input_csv, seed, redact, include_speculative)
     for name in STAGES:
         console.print(f"[dim]-> {name}[/]")
         _run_stage(name, cfg)

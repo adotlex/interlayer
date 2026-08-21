@@ -356,8 +356,15 @@ def build_context(
     inferred_rows = _person_rows(
         inferred_pool[: cfg.top_n], red, by_id, org_by_id, labels_for_clusters
     )
-    speculative_rows = _person_rows(
-        speculative_pool[: cfg.top_n], red, by_id, org_by_id, labels_for_clusters
+    # Rendered only on request. A row below the speculative floor is a name with
+    # effectively no evidence behind it, and this report is a file the operator
+    # forwards to other people; naming someone there on no evidence is the harm
+    # this tool is most able to cause. The count is still reported, so the rows
+    # are visibly withheld rather than silently missing.
+    speculative_rows = (
+        _person_rows(speculative_pool[: cfg.top_n], red, by_id, org_by_id, labels_for_clusters)
+        if cfg.include_speculative
+        else ()
     )
 
     ordered_clusters = sorted(scored_clusters, key=lambda c: (-c.score, c.cluster_id))
@@ -435,6 +442,8 @@ def build_context(
         "observed_rows": observed_rows,
         "inferred_rows": inferred_rows,
         "speculative_rows": speculative_rows,
+        "speculative_withheld": len(speculative_pool) if not cfg.include_speculative else 0,
+        "email_mode": cfg.email_mode,
         "cluster_rows": cluster_rows,
         "node_groups": node_groups,
         "inferred_d": layout.inferred_d,

@@ -65,12 +65,23 @@ BANNED_IMPORTS: frozenset[str] = frozenset(
         "socketserver",
         "ssl",
         "telnetlib",
-        "urllib",
+        "urllib.error",
+        "urllib.request",
         "urllib3",
         "webbrowser",
         "xmlrpc",
     }
 )
+"""Modules that can open a connection.
+
+``urllib.parse`` is deliberately absent while ``urllib.request`` is listed. The
+former is pure string manipulation that cannot perform I/O; it merely lives in
+the same package as the latter. Banning it buys no privacy and forces every
+module that reads a profile URL to hand-roll its own parser, which is strictly
+more likely to get percent-decoding or host-splitting wrong. The guarantee that
+actually matters is enforced at the socket layer by ``test_no_network_egress``,
+which no import rule can substitute for.
+"""
 
 #: The single module P-2 permits to hold network code. It does not exist today,
 #: which makes the rule absolute; the constant is here so the exemption is

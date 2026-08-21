@@ -182,7 +182,7 @@ def _write_scenario(art: Path, *, n_people: int, redact: bool, seed: int = 7) ->
     ids = [p.person_id for p in people]
 
     edges: list[GraphEdge] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, ...]] = set()
     for i in range(n_people):
         for _ in range(2):
             j = rng.randrange(n_people)
@@ -191,7 +191,7 @@ def _write_scenario(art: Path, *, n_people: int, redact: bool, seed: int = 7) ->
             key = tuple(sorted((ids[i], ids[j])))
             if key in seen:
                 continue
-            seen.add(key)  # type: ignore[arg-type]
+            seen.add(key)
             observed = (i + j) % 11 == 0
             edges.append(
                 GraphEdge(
