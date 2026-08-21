@@ -309,6 +309,17 @@ describe('the five shipped policy factories', () => {
     expect([breaker.kind, breaker.scope]).toEqual(['circuit-breaker', 'attempt']);
     expect([attempt.kind, attempt.scope]).toEqual(['attempt-timeout', 'attempt']);
     expect([total.kind, total.scope]).toEqual(['total-timeout', 'call']);
+
+    // `policyStack()` filters on the policy's OWN `scope`, not on
+    // `POLICY_SCOPE[kind]`, so a factory that declared the two inconsistently
+    // would land its policy on the wrong stack — outside the retry loop, say —
+    // with no type error anywhere. None of the five do; this is the guard.
+    for (const policy of [retry, limiter, breaker, attempt]) {
+      expect(policy.scope, `${policy.name} declares its canonical scope`).toBe(
+        POLICY_SCOPE[policy.kind],
+      );
+    }
+    expect(total.scope).toBe(POLICY_SCOPE[total.kind]);
   });
 
   it('sort from a reversed declaration into Retry > RateLimit > Breaker > AttemptTimeout', () => {

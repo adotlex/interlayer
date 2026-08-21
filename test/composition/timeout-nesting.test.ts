@@ -380,3 +380,46 @@ describe('cancellation through the whole stack (ORD-3)', () => {
     await layer.close();
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * 5. Retry's cooperative budget vs. the pre-emptive total timeout
+ * ------------------------------------------------------------------ */
+
+describe('the retry budget derived from the call deadline', () => {
+  it('stops short rather than sleeping into a deadline it cannot meet, leaving the chain room', async () => {
+    // R4 §1.4: `budgetMs` is the COOPERATIVE optimisation and the total timeout
+    // is the PRE-EMPTIVE guarantee. Composition is what makes the cooperative
+    // half worth having: retry gives up at t=60 instead of burning the last
+    // 40 ms on a sleep, and those 40 ms are still there for provider `b`.
+    const runtime = createFakeRuntime();
+    const a = scripted({ id: 'a', failures: Number.POSITIVE_INFINITY });
+    const b = scripted({ id: 'b' });
+    const layer = createLayer({
+      contract: echoContract,
+      providers: [
+        defineProvider(echoContract, { id: 'a', capabilities: { echo: a.handler } }),
+        defineProvider(echoContract, { id: 'b', capabilities: { echo: b.handler } }),
+      ],
+      resilience: {
+        retry: { maxAttempts: 5, strategy: 'fixed', baseDelayMs: 60 },
+        breaker: false,
+        rateLimit: false,
+        timeout: { attemptTimeoutMs: 1_000, totalTimeoutMs: 100 },
+      },
+      runtime,
+    });
+
+    const meta = await settle(runtime, layer.callWithMeta('echo', { n: 1 }));
+
+    expect(a.at, 'two of a budget of five: the third sleep would not have fitted').toEqual([0, 60]);
+    expect(meta.providerId).toBe('b');
+    expect(
+      meta.attempts,
+      'stats.attempts counts PHYSICAL calls at the innermost boundary, across providers',
+    ).toBe(3);
+    expect(meta.errors.map((e) => e.code)).toEqual(['RETRY_EXHAUSTED']);
+    expect(runtime.now(), 'inside the 100 ms budget, with room to spare').toBe(60);
+    expect(runtime.pendingTimers).toBe(0);
+    await layer.close();
+  });
+});

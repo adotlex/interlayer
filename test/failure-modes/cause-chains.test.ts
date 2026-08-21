@@ -41,6 +41,17 @@ function transientRaw(message: string): Error {
   return Object.assign(new Error(message), { status: 503 });
 }
 
+/**
+ * Reads one key off a `toJSON()` projection.
+ *
+ * `Record<string, unknown>` is an index signature, so `noPropertyAccessFromIndexSignature`
+ * demands `json['code']` while Biome's `useLiteralKeys` demands `json.code`. A
+ * non-literal key satisfies both.
+ */
+function field(record: Record<string, unknown>, key: string): unknown {
+  return record[key];
+}
+
 describe('cause chains survive the full stack', () => {
   it('the original handler throw is reachable through retry AND fallback wrapping', async () => {
     const runtime = createFakeRuntime();
@@ -315,11 +326,11 @@ describe('cause projection for logs', () => {
     const error = await rejectionOf(runtime, layer.call('run', { q: 'x' }));
     const json = error.toJSON();
 
-    expect(json['code']).toBe('ALL_FAILED');
+    expect(field(json, 'code')).toBe('ALL_FAILED');
     expect(json).not.toHaveProperty('stack');
     // An Interlayer cause is projected recursively…
-    const cause = json['cause'] as Record<string, unknown>;
-    expect(cause['code']).toBe('TRANSPORT');
+    const cause = field(json, 'cause') as Record<string, unknown>;
+    expect(field(cause, 'code')).toBe('TRANSPORT');
     expect(cause).not.toHaveProperty('stack');
 
     if (!hasCode(error, 'ALL_FAILED')) {
@@ -328,7 +339,10 @@ describe('cause projection for logs', () => {
     }
     // …and a foreign one down to name + message only.
     const first = error.failures[0];
-    expect(first?.toJSON()['cause']).toEqual({ name: 'Error', message: 'root cause' });
+    expect(first === undefined ? undefined : field(first.toJSON(), 'cause')).toEqual({
+      name: 'Error',
+      message: 'root cause',
+    });
     await layer.close();
   });
 });
