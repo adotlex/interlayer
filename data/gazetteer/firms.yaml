@@ -852,14 +852,25 @@ normalization:
 # -----------------------------------------------------------------------------
 # Matching thresholds (empirically derived - see docs/research/04-entity-resolution.md)
 # -----------------------------------------------------------------------------
+# Empirically selected: rapidfuzz WRatio evaluated ALWAYS behind the containment
+# guard and the negative gazetteer. Numbers from docs/research/04-entity-resolution.md
+# (Experiment G): at 86-90 the hold-out recall plateaus at 0.692 with a 0.000
+# wrong-firm rate; at 92 hold-out recall falls to 0.572 for no precision gain.
 thresholds:
   exact: 100
-  primary_scorer: token_set_ratio_with_containment_guard
-  accept: 92          # >= 92 -> auto-accept
-  review: 85          # 85..91 -> human/LLM review queue
-  reject: 85          # < 85 -> reject
-  weak_alias_accept: 100      # weak aliases (JS, SIG, IMC) need an EXACT hit
+  primary_scorer: WRatio
+  require_containment_guard: true     # NON-OPTIONAL. The scorer alone is unsafe.
+  guard_token_threshold: 80           # per-token alignment cutoff inside the guard
+  accept: 90          # >= 90 -> auto-accept  (top of the 86-90 plateau)
+  review_low: 84      # 84..89 -> human/LLM review queue
+  reject: 84          # < 84 -> reject
+  weak_alias_accept: 100      # weak aliases (JS, SIG, IMC, CS) need an EXACT hit
   weak_alias_requires_corroboration: true
   banned_scorers:
-    - partial_ratio   # "Citadel" vs "Citadel Broadcasting" = 100. Never use.
+    # All of these score 100 for "Citadel" vs "Citadel Broadcasting" (see Exp. D)
+    # and MUST NOT be used as a bare accept signal.
+    - partial_ratio
     - partial_token_sort_ratio
+    - partial_token_set_ratio
+    - token_set_ratio_without_guard
+    - token_ratio_without_guard
