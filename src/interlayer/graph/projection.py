@@ -20,6 +20,7 @@ from interlayer.graph.weights import (
     SizeDamping,
     Stint,
     cotenure_factor,
+    end_exclusive_ordinal,
     newman_factor,
 )
 from interlayer.models import Affiliation, AffiliationKind, Org
@@ -69,6 +70,26 @@ class Projection:
         return sum(e.weight for e in self.pairs.values())
 
 
+def _as_of_ordinal(affiliations: Iterable[Affiliation]) -> int | None:
+    """The dataset's own "now": the latest date anyone recorded.
+
+    Derived from the data rather than the clock so that a run is reproducible --
+    reading ``date.today()`` here would make yesterday's artifacts fail to
+    reproduce today, which is the property the whole pipeline is built around.
+    """
+    latest: int | None = None
+    for affiliation in affiliations:
+        for bound in (affiliation.end, affiliation.start):
+            if bound is None:
+                continue
+            try:
+                ordinal = end_exclusive_ordinal(bound)
+            except ValueError:
+                continue
+            latest = ordinal if latest is None else max(latest, ordinal)
+    return latest
+
+
 def _group_by_org(
     affiliations: Iterable[Affiliation],
 ) -> tuple[dict[str, dict[str, list[Stint]]], int]:
@@ -85,8 +106,9 @@ def _group_by_org(
         affiliations,
         key=lambda a: (a.org_id, a.person_id, str(a.start or ""), str(a.end or ""), str(a.kind)),
     )
+    as_of = _as_of_ordinal(ordered)
     for affiliation in ordered:
-        stint = Stint.of(affiliation)
+        stint = Stint.of(affiliation, as_of=as_of)
         invalid += stint.invalid_dates
         groups[affiliation.org_id][affiliation.person_id].append(stint)
     return {org: dict(people) for org, people in groups.items()}, invalid

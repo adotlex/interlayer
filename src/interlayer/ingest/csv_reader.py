@@ -128,11 +128,38 @@ def normalize_header_cell(cell: str) -> str:
     return _WS_RE.sub(" ", folded).strip().casefold()
 
 
+_KNOWN_HEADER_CELLS: frozenset[str] = frozenset(
+    alias for aliases in COLUMN_ALIASES.values() for alias in aliases
+)
+
+_HEADER_RECOGNITION_RATIO = 0.6
+"""Fraction of a row's cells that must be known column names for it to be a header.
+
+A real header is almost entirely recognised cells, even when one column is
+missing (6 of 6 known). Preamble prose that happens to name the columns
+("the exported columns are, First Name, Last Name, and five others") is mostly
+unrecognised (2 of 4). The ratio separates the two without demanding a complete
+header, which would cost the specific "missing column X" diagnostic.
+"""
+
+
+_MIN_KNOWN_HEADER_CELLS = 3
+"""Recognised cells a row needs before the ratio is even consulted, so a short
+prose fragment that happens to be mostly column names cannot qualify."""
+
+
 def _looks_like_header(cells: Sequence[str]) -> bool:
-    folded = {normalize_header_cell(c) for c in cells}
-    return bool(folded & set(COLUMN_ALIASES["first_name"])) and bool(
-        folded & set(COLUMN_ALIASES["last_name"])
-    )
+    """Whether a row is the header, as opposed to prose that mentions the columns.
+
+    Deliberately does NOT require the full set of columns: a header missing one
+    is still a header, and recognising it is what produces the specific "missing
+    column X" diagnostic instead of a useless "no header found".
+    """
+    present = [c for c in (normalize_header_cell(c) for c in cells) if c]
+    if not present:
+        return False
+    known = sum(1 for c in present if c in _KNOWN_HEADER_CELLS)
+    return known >= _MIN_KNOWN_HEADER_CELLS and known / len(present) >= _HEADER_RECOGNITION_RATIO
 
 
 def find_header(lines: Sequence[str]) -> tuple[int, tuple[str, ...]]:
@@ -151,11 +178,23 @@ def find_header(lines: Sequence[str]) -> tuple[int, tuple[str, ...]]:
             continue
         if _looks_like_header(cells):
             return index, tuple(cells)
-    preview = ", ".join(repr(line.strip()[:40]) for line in lines[:5]) or "<empty file>"
+    # Report SHAPE, never content. Pointed at messages.csv or Contacts.csv from
+    # the same download, echoing the first lines would write third-party emails
+    # and message bodies to stderr -- precisely what the rest of this stage
+    # refuses to do.
+    shape = (
+        ", ".join(
+            f"line {i + 1}: {len(next(csv.reader([line]), []))} field(s)"
+            for i, line in enumerate(lines[:5])
+            if line.strip()
+        )
+        or "<empty file>"
+    )
     raise IngestError(
-        "no header row found: expected a line containing 'First Name' and 'Last Name' "
-        f"within the first {MAX_PREAMBLE_LINES} lines. First lines were: {preview}. "
-        "Is this a LinkedIn Connections.csv?"
+        "no header row found: expected a line naming the export's columns "
+        f"({', '.join(CANONICAL_HEADER)}) within the first {MAX_PREAMBLE_LINES} "
+        f"lines. Saw {shape}. Is this a LinkedIn Connections.csv, rather than "
+        "another file from the same export?"
     )
 
 

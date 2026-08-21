@@ -26,6 +26,7 @@ __all__ = [
     "LEGAL_SUFFIXES",
     "MULTI_TOKEN_SUFFIXES",
     "NOISE_TOKENS",
+    "STRUCTURAL_NOUNS",
     "initials",
     "norm",
     "norm_raw",
@@ -294,6 +295,12 @@ _CLEANCO_TERMS: tuple[str, ...] = (
 # the target firms. Aliases that genuinely need the word ("Millennium Partners")
 # are indexed under their full form and still resolve.
 _GAZETTEER_EXTRA_TERMS: tuple[str, ...] = ("holdings", "holding", "group")
+
+STRUCTURAL_NOUNS: frozenset[str] = frozenset(_GAZETTEER_EXTRA_TERMS)
+"""Words that may denote a DIFFERENT corporate entity rather than a spelling
+variant of the same one. "Jane Street Group" is Jane Street; "Citadel Holding
+Corporation" is not Citadel. Stripping one to reach a match therefore does not
+license full confidence -- see the exact-hit path in ``match.resolve``."""
 
 LEGAL_SUFFIXES, MULTI_TOKEN_SUFFIXES = _fold_terms(_CLEANCO_TERMS + _GAZETTEER_EXTRA_TERMS)
 

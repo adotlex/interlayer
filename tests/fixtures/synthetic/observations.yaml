@@ -1,0 +1,30 @@
+observed_on: 2026-08-01
+targets:
+  - name: Priya Raman
+    firm: jane_street
+    url: https://www.linkedin.com/in/priya-raman-js-4821
+    title: Quantitative Trader
+    mutuals_stated: 4
+    mutuals: |
+      Marcus Osei
+      Tom Fischer
+      Grace Moreau
+      Hannah Bianchi
+  - name: Elena Vasquez
+    firm: citadel_securities
+    url: https://www.linkedin.com/in/elena-vasquez-cs
+    title: Senior Software Engineer, Low Latency
+    mutuals_stated: 12
+    truncated: yes
+    mutuals: |
+      Priya Vasquez
+      Daniel Nakamura
+      Omar Lindqvist
+  - name: Daniel Osei
+    firm: citadel_llc
+    url: https://www.linkedin.com/in/daniel-osei-cllc
+    title: Portfolio Manager
+    mutuals_stated: 2
+    mutuals: |
+      Rajiv Haddad
+      Victor Novak

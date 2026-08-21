@@ -352,6 +352,24 @@ def _build_indexes(entities: dict[str, Entity]) -> Gazetteer:
                     f"gazetteer entity {key!r} has an invalid negative_pattern {pattern!r}: {exc}"
                 ) from exc
 
+    # A declared weak alias must not be reachable through the ordinary indexes,
+    # or the quarantine is decorative. It leaks by folding: "IMC B.V." is an
+    # ordinary alias, but stripping its legal suffix reduces it to "imc", which
+    # is the very initialism the entity quarantines -- so the bare form entered
+    # the strong index by the back door and matched with no corroboration.
+    # Anything colliding with the entity's own weak form is moved, not copied.
+    for key, entity in entities.items():
+        quarantined = {
+            form for alias in entity.weak_aliases for form in (norm(alias), norm_raw(alias)) if form
+        }
+        for form in quarantined:
+            if form in exact:
+                exact[form].discard(key)
+                if not exact[form]:
+                    del exact[form]
+            fuzzy.discard((form, key))
+            weak.setdefault(form, set()).add(key)
+
     def ordered(table: dict[str, set[str]]) -> dict[str, tuple[str, ...]]:
         return {k: tuple(sorted(v, key=preference)) for k, v in sorted(table.items())}
 

@@ -1,0 +1,7 @@
+"Notes:"
+"Hand-edited on 02 Nov 2024 to repair a broken Company cell; the quote opening this line is never closed.
+Your export contains your First Name, Last Name and URL, among other columns.
+
+First Name,Last Name,URL,Email Address,Company,Position,Connected On
+Ada,Lovelace,https://www.linkedin.com/in/ada-lovelace,,Jane Street,Trader,01 Mar 2021
+Grace,Hopper,https://www.linkedin.com/in/grace-hopper,,Citadel,Engineer,03 Mar 2021

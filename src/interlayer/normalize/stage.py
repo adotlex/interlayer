@@ -139,8 +139,15 @@ def _org_entity(result: MatchResult, gaz: Gazetteer) -> Entity | None:
     firm, and nothing about who the employer actually is. Those fall back to a
     surface-form Org so a coffee shop and a dental practice on the same road
     stay separate employers.
+
+    A REVIEW verdict likewise builds no gazetteer Org. Review means the match is
+    not established, and ``Settings.match_review`` says such a match is "never
+    auto-applied" -- but the candidate key travels on the result for the queue's
+    benefit, and reading it here silently attached the person to the target firm
+    at full strength anyway. The suggestion belongs in the queue; the attribution
+    waits for a human.
     """
-    if result.entity_key is None:
+    if result.entity_key is None or result.verdict is MatchVerdict.REVIEW:
         return None
     entity = gaz.entities.get(result.entity_key)
     return entity if entity is not None and entity.is_specific_org else None
@@ -154,11 +161,16 @@ def _group_key(entity: Entity | None, folded: str) -> str:
 def _confidence(result: MatchResult, entity: Entity | None) -> float:
     """How sure we are that the affiliation points at the right org.
 
-    An unresolved string gets 1.0: the person really did write that employer, and
-    the org built from it is that string and nothing more. Only a gazetteer
-    identification can be *wrong*, so only a gazetteer identification is damped.
+    A string with no gazetteer candidate at all gets 1.0: the person really did
+    write that employer, and the org built from it is that string and nothing
+    more. Only a gazetteer identification can be *wrong*, so only a gazetteer
+    identification is damped.
+
+    A review-band match is damped even though it builds no gazetteer Org. The
+    identification is uncertain, and dropping the damping along with the Org
+    would report that uncertainty as if it were an ordinary unresolved employer.
     """
-    if entity is None:
+    if entity is None and result.entity_key is None:
         return 1.0
     return min(1.0, result.score / 100.0)
 
@@ -208,10 +220,15 @@ def _resolve_person_strings(
     corroborating = frozenset(firm for r in first if (firm := r.firm_key) is not None)
     out: list[tuple[AffiliationKind, str, str, MatchResult]] = []
     for (kind, raw_text, title), result in zip(strings, first, strict=True):
+        # A quarantined initialism resolves to REVIEW, not REJECT -- that is the
+        # quarantine working. Gating the retry on REJECT alone meant corroboration
+        # could never promote one, so "JS" beside "Jane Street" on the same
+        # profile stayed unresolved.
+        weak_pending = result.reason.startswith("weak_alias_uncorroborated")
         retryable = (
             corroborating
-            and result.entity_key is None
-            and result.verdict is MatchVerdict.REJECT
+            and (result.entity_key is None or weak_pending)
+            and (result.verdict is MatchVerdict.REJECT or weak_pending)
             and not result.reason.startswith("negative_")
         )
         if retryable:
@@ -349,7 +366,12 @@ def run(cfg: Settings) -> None:
             _record_org(drafts, group, raw_text.strip(), kind, entity)
             verdicts[str(result.verdict)] += 1
 
-            finance = _is_finance(entity)
+            # Read the title against the CANDIDATE, even when the verdict is
+            # review and no gazetteer Org is built from it. Interpreting a title
+            # is not attributing a person: "MD" only reads as Managing Director
+            # because the candidate is a fund, and the reviewer needs that
+            # reading in order to judge the match at all.
+            finance = _is_finance(entity or named)
             seniority = (
                 extract_seniority(title, finance_context=finance)
                 if kind is AffiliationKind.EMPLOYMENT

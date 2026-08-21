@@ -259,8 +259,15 @@ def connections_csv(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def connections_csv_no_preamble(tmp_path: Path) -> Path:
-    """Same data with no preamble at all -- an older export shape."""
-    path = tmp_path / "Connections.csv"
+    """Same data with no preamble at all -- an older export shape.
+
+    Written to its own subdirectory: sharing ``tmp_path/Connections.csv`` with the
+    ``connections_csv`` fixture meant a test requesting both silently got whichever
+    ran second, twice.
+    """
+    sub = tmp_path / "no_preamble"
+    sub.mkdir(exist_ok=True)
+    path = sub / "Connections.csv"
     path.write_text(
         "First Name,Last Name,URL,Email Address,Company,Position,Connected On\n"
         "Ada,Lovelace,https://www.linkedin.com/in/ada-lovelace,,Jane Street,Trader,01 Mar 2021\n",

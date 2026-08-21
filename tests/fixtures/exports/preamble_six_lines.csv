@@ -1,0 +1,9 @@
+"Notes:"
+"When exporting your connection data, you may notice that some of the email addresses are missing."
+"You will only see email addresses for connections who have allowed their connections to see or download their email address using this setting https://www.linkedin.com/psettings/privacy/email."
+"You can learn more here https://www.linkedin.com/help/linkedin/answer/261"
+"Export generated 02 Nov 2024."
+
+First Name,Last Name,URL,Email Address,Company,Position,Connected On
+Ada,Lovelace,https://www.linkedin.com/in/ada-lovelace,,Jane Street,Trader,01 Mar 2021
+Alan,Turing,https://www.linkedin.com/in/alan-turing,,Citadel Securities,Quant,02 Mar 2021

@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from interlayer.errors import IngestError, StageInputMissingError
 
 __all__ = [
+    "dump_json",
     "hash_email",
     "read_jsonl",
     "read_text",
@@ -48,16 +49,31 @@ FILE_MODE = 0o600
 
 
 def secure_dir(path: Path) -> Path:
-    """Create or confirm a 0700 directory.
+    """Create or confirm a 0700 directory, including any parents it creates.
 
-    The ``chmod`` is unconditional because ``mkdir(exist_ok=True)`` does not
-    correct the mode of a directory that already exists.
+    Two traps, both verified rather than assumed:
+
+    * ``mkdir(exist_ok=True)`` does not correct the mode of a directory that
+      already exists, so the ``chmod`` is unconditional.
+    * ``mkdir(mode=…, parents=True)`` applies the mode to the **leaf only**.
+      Intermediate directories take the umask instead, so creating
+      ``out/run-1/`` under a permissive umask left ``out/`` world-writable while
+      holding identifiable data about third parties. Every ancestor this call
+      brings into existence is therefore tightened too -- and only those, so a
+      pre-existing shared parent is left alone.
     """
+    created: list[Path] = []
+    for ancestor in (path, *path.parents):
+        if ancestor.exists():
+            break
+        created.append(ancestor)
+
     path.mkdir(mode=DIR_MODE, parents=True, exist_ok=True)
-    path.chmod(DIR_MODE)
-    actual = stat.S_IMODE(path.stat().st_mode)
-    if actual != DIR_MODE:
-        raise OSError(f"{path} is {actual:o}, expected {DIR_MODE:o}")
+    for made in (*created, path):
+        made.chmod(DIR_MODE)
+        actual = stat.S_IMODE(made.stat().st_mode)
+        if actual != DIR_MODE:
+            raise OSError(f"{made} is {actual:o}, expected {DIR_MODE:o}")
     return path
 
 

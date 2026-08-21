@@ -24,7 +24,7 @@ from rapidfuzz import fuzz
 
 from interlayer.models import AffiliationKind, MatchVerdict
 from interlayer.normalize.gazetteer import FIRM_TIERS, Gazetteer
-from interlayer.normalize.normalize import initials, norm, norm_raw
+from interlayer.normalize.normalize import STRUCTURAL_NOUNS, initials, norm, norm_raw, tokens
 
 __all__ = [
     "ALLOW_TOKENS",
@@ -252,53 +252,113 @@ def resolve(
             return MatchResult(MatchVerdict.REJECT, key, tier, 100.0, f"negative_pattern:{owner}")
 
     # 4. Exact alias hit, under either normalisation.
+    #
+    #    A hit on the RAW form matched a listed alias as written. A hit only on
+    #    the FOLDED form was reached by discarding tokens, and that is not the
+    #    same thing: "Citadel Holdings" and "Citadel Holding Corporation" fold
+    #    onto "citadel" and were accepted as the fund at full confidence, though
+    #    the latter is a real unrelated company. Where the discarded token could
+    #    name a different corporate entity, the answer is genuinely
+    #    under-determined, so it goes to review rather than being asserted --
+    #    the same treatment "The Citadel" already gets in step 1.
     for probe, tag in ((raw, "exact_raw"), (folded, "exact")):
         keys = _in_scope(gaz.exact.get(probe), scope)
-        if keys:
-            entity = gaz.entities[keys[0]]
-            verdict = MatchVerdict.ACCEPT if entity.is_firm else MatchVerdict.REJECT
+        if not keys:
+            continue
+        entity = gaz.entities[keys[0]]
+        if not entity.is_firm:
             return MatchResult(
-                verdict, entity.key, entity.tier, 100.0, f"{tag}:{entity.key}", probe
+                MatchVerdict.REJECT, entity.key, entity.tier, 100.0, f"{tag}:{entity.key}", probe
             )
+        discarded = set(tokens(raw)) - set(tokens(folded))
+        shifted = discarded & STRUCTURAL_NOUNS
+        if probe == folded and shifted:
+            return MatchResult(
+                MatchVerdict.REVIEW,
+                None,
+                None,
+                100.0,
+                f"structural_noun_stripped:{entity.key}:{'|'.join(sorted(shifted))}",
+                alias=probe,
+                alternatives=(entity.key,),
+            )
+        return MatchResult(
+            MatchVerdict.ACCEPT, entity.key, entity.tier, 100.0, f"{tag}:{entity.key}", probe
+        )
 
-    # 5. Quarantined aliases: exact hit only, and still not enough on its own.
-    if allow_weak:
-        for probe in (raw, folded):
-            keys = _in_scope(gaz.weak_exact.get(probe), scope)
-            if keys:
-                entity = gaz.entities[keys[0]]
-                if entity.key in corroborating_keys and entity.is_firm:
-                    reason = f"weak_alias_corroborated:{entity.key}"
-                    verdict = MatchVerdict.ACCEPT
-                else:
-                    reason = f"weak_alias_uncorroborated:{entity.key}"
-                    verdict = MatchVerdict.REVIEW
-                return MatchResult(verdict, entity.key, entity.tier, 100.0, reason, probe)
+    # 5. Quarantined aliases: a bare initialism is never enough on its own.
+    #
+    #    The quarantine applies whether or not weak matching is enabled. Checking
+    #    it only under ``allow_weak`` let the query fall through to the fuzzy
+    #    sweep instead, where "SIG" scored against a longer alias containing it
+    #    and was accepted outright -- the quarantine bypassed by the very path it
+    #    exists to prevent. ``allow_weak`` governs whether corroboration can
+    #    PROMOTE a weak hit, not whether the restriction is enforced.
+    for probe in (raw, folded):
+        keys = _in_scope(gaz.weak_exact.get(probe), scope)
+        if not keys:
+            continue
+        entity = gaz.entities[keys[0]]
+        if allow_weak and entity.key in corroborating_keys and entity.is_firm:
+            return MatchResult(
+                MatchVerdict.ACCEPT,
+                entity.key,
+                entity.tier,
+                100.0,
+                f"weak_alias_corroborated:{entity.key}",
+                probe,
+            )
+        # The candidate is named on the result even though the verdict is review:
+        # the reviewer needs to know what it was nearly matched to. Attribution is
+        # withheld downstream by verdict, not by hiding the candidate here.
+        return MatchResult(
+            MatchVerdict.REVIEW,
+            entity.key,
+            entity.tier,
+            100.0,
+            f"weak_alias_uncorroborated:{entity.key}",
+            probe,
+            alternatives=(entity.key,),
+        )
 
-    # 6. Fuzzy sweep. The index is pre-sorted by preference, so a strict ">"
-    #    keeps ties resolving to the higher-tier entity, deterministically.
-    best_key: str | None = None
-    best_alias: str | None = None
-    best_score = 0.0
+    # 6. Fuzzy sweep. Every candidate at the top score is kept, not just the
+    #    first one seen. A firm with both a long and a short alias scores the
+    #    same on each ("jane street" and "jane st" both hit 90 for "Jane Street
+    #    London"), and if the short one happens to sort first, the guard then
+    #    rejects "street" as an unaligned extra and a real contact disappears.
+    #    The index is pre-sorted by preference, so order within a score band
+    #    stays deterministic.
+    scored: list[tuple[float, str, str]] = []
     for alias, key in gaz.fuzzy:
         if key not in scope:
             continue
-        score = fuzz.WRatio(folded, alias)
-        if score > best_score:
-            best_key, best_alias, best_score = key, alias, score
+        scored.append((fuzz.WRatio(folded, alias), alias, key))
 
-    if best_key is None or best_alias is None or best_score < review:
+    if not scored:
+        return MatchResult(MatchVerdict.REJECT, None, None, 0.0, "below_threshold")
+
+    best_score = max(score for score, _, _ in scored)
+    if best_score < review:
         return MatchResult(MatchVerdict.REJECT, None, None, best_score, "below_threshold")
 
     # 7. The guard, which is not optional: without it this is the worst matcher
-    #    measured, and with it the wrong-firm rate is zero.
-    if not containment_guard(folded, best_alias):
+    #    measured, and with it the wrong-firm rate is zero. Applied to each
+    #    top-scoring candidate in preference order; the first survivor wins.
+    tied = [(alias, key) for score, alias, key in scored if score == best_score]
+    best_alias = best_key = None
+    for alias, key in tied:
+        if containment_guard(folded, alias):
+            best_alias, best_key = alias, key
+            break
+
+    if best_key is None or best_alias is None:
+        rejected_alias, rejected_key = tied[0]
         return MatchResult(
             MatchVerdict.REJECT,
             None,
             None,
             best_score,
-            f"guard_reject:{best_key}({best_alias})",
+            f"guard_reject:{rejected_key}({rejected_alias})",
         )
 
     entity = gaz.entities[best_key]

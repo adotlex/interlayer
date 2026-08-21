@@ -40,8 +40,11 @@ _PROBE_A = datetime(2001, 1, 1)
 _PROBE_B = datetime(2002, 2, 2)
 
 # A leading four-digit year means the string is ISO-ordered (Y-M-D), where
-# ``dayfirst=True`` would silently read 2021-03-01 as the 3rd of January.
-_YEAR_FIRST_RE = re.compile(r"^\d{4}[-/.]")
+# ``dayfirst=True`` would silently read 2021-03-01 as the 3rd of January. The
+# separator is optional: basic-format ``20210301`` is just as ISO-ordered, and
+# requiring one let it through to be read day-first as 2021-01-03. Both probes
+# agree on that misreading, so the disagreement guard does not catch it.
+_YEAR_FIRST_RE = re.compile(r"^\d{4}(?:[-/.]|\d{4}$)")
 
 
 @dataclass(frozen=True)

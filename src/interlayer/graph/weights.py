@@ -51,6 +51,7 @@ __all__ = [
     "SizeDamping",
     "Stint",
     "cotenure_factor",
+    "end_exclusive_ordinal",
     "newman_factor",
     "observed_bonus",
     "resolve_size_damping",
@@ -153,7 +154,7 @@ def _start_ordinal(value: ApproxDate) -> int:
     return value.to_date().toordinal()
 
 
-def _end_exclusive_ordinal(value: ApproxDate) -> int:
+def end_exclusive_ordinal(value: ApproxDate) -> int:
     """Half-open end of a coarse date: ``2019`` ends 2020-01-01, not 2019-01-01.
 
     LinkedIn gives year-only dates far more often than full ones. Treating
@@ -166,6 +167,15 @@ def _end_exclusive_ordinal(value: ApproxDate) -> int:
         year, month = (value.year + 1, 1) if value.month == 12 else (value.year, value.month + 1)
         return date(year, month, 1).toordinal()
     return value.to_date().toordinal() + 1
+
+
+OPEN_ENDED = date.max.toordinal()
+"""Right bound for a role that is still current and has no as-of date.
+
+Not ``date.today()``: reading the clock here would mean the same input produced
+a different graph tomorrow, and reproducibility is the property the pipeline is
+built on.
+"""
 
 
 class Stint(NamedTuple):
@@ -181,12 +191,33 @@ class Stint(NamedTuple):
     invalid_dates: bool = False
 
     @classmethod
-    def of(cls, affiliation: Affiliation) -> Stint:
+    def of(cls, affiliation: Affiliation, *, as_of: int | None = None) -> Stint:
+        """Build a stint, closing an open current role at ``as_of``.
+
+        A role marked current has no end date by definition, which is not the
+        same as having an unknown one. Treating the two alike damped two people
+        who work at the same firm *right now* as though nobody knew when either
+        was there -- and those are precisely the highest-value edges this tool
+        exists to surface.
+
+        ``as_of`` is supplied by the caller from the data rather than read from
+        the clock, so the same input keeps producing the same graph tomorrow.
+        """
         start, end = affiliation.start, affiliation.end
+        if start is not None and end is None and affiliation.is_current:
+            try:
+                begin = _start_ordinal(start)
+            except ValueError:
+                return cls(affiliation, None, invalid_dates=True)
+            # With no as-of supplied, a current role is simply open on the
+            # right: it has not ended. The overlap it produces is then bounded by
+            # max_overlap_years rather than by a guess at today's date.
+            close = OPEN_ENDED if as_of is None else max(begin + 1, as_of)
+            return cls(affiliation, (begin, close))
         if start is None or end is None:
             return cls(affiliation, None)
         try:
-            return cls(affiliation, (_start_ordinal(start), _end_exclusive_ordinal(end)))
+            return cls(affiliation, (_start_ordinal(start), end_exclusive_ordinal(end)))
         except ValueError:
             # e.g. day=31 in a 30-day month: ApproxDate validates ranges, not
             # calendars. One malformed stint must not abort the whole run, so it

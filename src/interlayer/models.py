@@ -208,6 +208,17 @@ class ApproxDate(Base):
     def _day_requires_month(self) -> Self:
         if self.day is not None and self.month is None:
             raise ValueError("day given without month")
+        if self.day is not None and self.month is not None:
+            # ``day`` is bounded 1-31 without consulting the month, so 30 February
+            # validated here and raised later inside whichever stage first called
+            # to_date(). Fail at construction, where the bad value is visible.
+            import calendar
+
+            last = calendar.monthrange(self.year, self.month)[1]
+            if self.day > last:
+                raise ValueError(
+                    f"{self.year:04d}-{self.month:02d} has {last} days, got day={self.day}"
+                )
         return self
 
     @property
@@ -384,6 +395,22 @@ class Affiliation(Base):
     as though their dates were missing."""
 
     weight: NonNegativeFloat = 1.0
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        """Mirror Position's invariants.
+
+        Without the ordering check an affiliation whose end precedes its start
+        does not overlap *itself*, so co-tenure stops being reflexive and the
+        graph stage silently drops the pair. Without the currency check, "still
+        there" and "left on this date" can be asserted at once, and ``overlaps``
+        reads the end date while ignoring the flag.
+        """
+        if self.start and self.end and self.end.span_end < self.start.span_start:
+            raise ValueError("affiliation end precedes start")
+        if self.is_current and self.end is not None:
+            raise ValueError("is_current=True conflicts with an end date")
+        return self
 
     @property
     def affiliation_id(self) -> str:

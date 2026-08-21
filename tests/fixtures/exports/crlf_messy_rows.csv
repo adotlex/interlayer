@@ -1,0 +1,12 @@
+First Name,Last Name,URL,Email Address,Company,Position,Connected On
+Ada,Lovelace,https://www.linkedin.com/in/ada-lovelace,ada@example.com,"Jane Street Capital, LLC","Trader, ""Delta One""",01 Mar 2021
+Zoë,Müller,https://de.linkedin.com/in/zoe-muller/,,Café Größe GmbH,Ingénieur,02 Mar 2021
+李,雷,https://cn.linkedin.com/in/li-lei,,腾讯,工程师,03 Mar 2021
+אבי,כהן,https://www.linkedin.com/in/avi-cohen,,Wix,Developer,04 Mar 2021
+Ada,Lovelace,https://uk.linkedin.com/in/ADA-Lovelace/?originalSubdomain=uk,,Jane Street,Partner,05 Mar 2021
+Nourl,Person,,,Acme Widgets,Dev,06 Mar 2021
+Company,Page,https://www.linkedin.com/company/jane-street,,Jane Street,Recruiter,07 Mar 2021
+Blank,Fields,https://www.linkedin.com/in/blank-fields,,,,08 Mar 2021
+Bad,Date,https://www.linkedin.com/in/bad-date,,Acme,Dev,sometime in 2021
+Multi,Line,https://www.linkedin.com/in/multi-line,,"Acme,
+Widgets",Dev,09 Mar 2021

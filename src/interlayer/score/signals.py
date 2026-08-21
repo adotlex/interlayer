@@ -345,14 +345,24 @@ def span(affiliation: Affiliation) -> str:
 def is_current(person: Person | None, affiliation: Affiliation) -> bool:
     """Whether a stint is still running.
 
-    Prefers the export's explicit ``is_current`` flag and falls back to an open
-    end date, which is how LinkedIn renders a present role.
+    Reads the affiliation's own flag. It used to look for the flag on the
+    person's positions instead, matched by ``company_org_id`` -- but ingest
+    leaves that field unset, so the branch never fired and currency collapsed to
+    "no end date recorded". An unrecorded end is not a present role: scoring one
+    as current doubled its weight and told the operator "works at Jane Street"
+    about someone whose input never said so, which is exactly the overstatement
+    the provenance design exists to prevent.
+
+    The person's positions remain a fallback for records built before
+    affiliations carried the flag; an open end date alone no longer qualifies.
     """
+    if affiliation.is_current:
+        return True
     if person is not None:
         for position in person.positions:
             if position.company_org_id == affiliation.org_id and position.is_current:
                 return True
-    return affiliation.end is None
+    return False
 
 
 def observed_signals(ctx: Context, person_id: str) -> list[Signal]:
