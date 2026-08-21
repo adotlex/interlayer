@@ -261,3 +261,57 @@ every other agent, so `--locked` is mandatory.
   `io.read_jsonl`, raising `StageInputMissingError` when run out of order.
 - Docstrings explain *why*, not *what*.
 - You did not edit a file you do not own.
+
+---
+
+## 8. Wave 3 addendum — testing notes
+
+### LFR benchmark graphs will hang your suite if you copy the usual parameters
+
+`nx.LFR_benchmark_graph` retries internally and can spin **forever**. `max_iters`
+bounds the community-assignment loop but **not** the degree-sequence loop, so it does
+not save you. The parameters quoted in `docs/research/02-graph-clustering.md`
+(`n=250, tau1=3, tau2=1.5, mu=0.1, average_degree=5, min_community=20`) hang past 25
+seconds in this environment.
+
+The fix is to specify `min_degree`/`max_degree` explicitly instead of
+`average_degree`. These two shapes were probed across mixing levels and converge in
+about 0.15 s every time:
+
+```python
+# 9 planted communities, works at mu = 0.1 .. 0.5
+SMALL = dict(n=300,  tau1=3, tau2=1.5, min_degree=5, max_degree=30,
+             min_community=20, max_community=60)
+# 17 planted communities, works at mu = 0.1 .. 0.4
+LARGE = dict(n=1000, tau1=3, tau2=1.5, min_degree=8, max_degree=50,
+             min_community=40, max_community=120)
+
+G = nx.LFR_benchmark_graph(**SMALL, mu=0.3, seed=7, max_iters=500)
+G = nx.Graph(G)                                  # it returns a MultiGraph
+G.remove_edges_from(nx.selfloop_edges(G))        # and it contains self-loops
+truth = {v: min(G.nodes[v]["community"]) for v in G}
+```
+
+Wrap generation in a timeout regardless, and mark anything above `SMALL` as `slow`.
+
+### Assertion targets, measured by the build agents
+
+Hold the code to these; they are observed values, not aspirations.
+
+| Property | Target |
+|---|---|
+| Clustering NMI vs planted truth, mu=0.1 | > 0.90 (measured 0.9986) |
+| Clustering NMI vs planted truth, mu=0.3 | > 0.80 (measured 0.9384) |
+| Cross-ensemble ARI, consensus, mu=0.3 | > 0.95 (measured 0.9893) |
+| Every returned cluster internally connected | 229/229 held |
+| Firm matching on the research case table | 100/100, wrong-firm rate 0 |
+| Report external references | exactly 0 |
+| Redaction leaks | exactly 0 |
+| Byte-identical artifacts, same seed | across `PYTHONHASHSEED` 0/1/12345/999 |
+
+### numpy and scikit-learn are test-only
+
+They are in the dev group, not the runtime. Use `sklearn.metrics.adjusted_rand_score`
+and `normalized_mutual_info_score` freely in tests, but a test that imports them to
+exercise *runtime* behaviour is testing the wrong thing — the pipeline is deliberately
+numpy-free.
