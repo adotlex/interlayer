@@ -56,6 +56,7 @@ from interlayer.models import (
     GraphStats,
     MutualObservation,
     Org,
+    Provenance,
     TargetPerson,
 )
 
@@ -218,6 +219,9 @@ def _assemble(
                 weight=round(weight, WEIGHT_PRECISION),
                 shared_org_ids=tuple(sorted(org_ids)),
                 kinds=tuple(sorted(kinds)),
+                # Recorded here, where the answer is actually known, so no reader
+                # has to re-derive it from the shape of the other fields.
+                provenance=(Provenance.OBSERVED if pair in observed.pairs else Provenance.INFERRED),
             )
         )
     return tuple(out)

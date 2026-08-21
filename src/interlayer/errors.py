@@ -13,6 +13,7 @@ __all__ = [
     "IngestError",
     "InterlayerError",
     "NetworkEgressError",
+    "RedactionLeakError",
     "ResolutionError",
     "StageInputMissingError",
 ]
@@ -49,6 +50,14 @@ class GraphError(InterlayerError):
 
 class EvidenceError(InterlayerError):
     """A scored result was assembled without the provenance required to justify it."""
+
+
+class RedactionLeakError(InterlayerError):
+    """Redacted output was found to contain identifying data.
+
+    Raised before anything is written: a redaction that leaks once has already
+    failed, so the write must not happen at all.
+    """
 
 
 class NetworkEgressError(InterlayerError):

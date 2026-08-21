@@ -52,6 +52,11 @@ class Settings(BaseModel):
     artifact_dir: Path = Path("artifacts")
     gazetteer: Path = Path("data/gazetteer/firms.yaml")
 
+    observations_input: Path | None = None
+    """Hand-collected Tier 2 observations. Deliberately NOT under artifact_dir,
+    which ``interlayer purge`` deletes wholesale -- hours of manual collection
+    must not live somewhere a routine cleanup destroys."""
+
     # --- determinism -------------------------------------------------------
     seed: int = DEFAULT_SEED
     """Every stochastic call must be seeded from this. See consensus_runs."""
@@ -128,6 +133,10 @@ class Settings(BaseModel):
         return self.artifact("people.jsonl")
 
     @property
+    def connections_path(self) -> Path:
+        return self.artifact("connections.jsonl")
+
+    @property
     def orgs_path(self) -> Path:
         return self.artifact("orgs.jsonl")
 
@@ -150,6 +159,18 @@ class Settings(BaseModel):
     @property
     def clusters_path(self) -> Path:
         return self.artifact("clusters.jsonl")
+
+    @property
+    def clusters_sweep_path(self) -> Path:
+        return self.artifact("clusters_sweep.jsonl")
+
+    @property
+    def review_queue_path(self) -> Path:
+        return self.artifact("review_queue.jsonl")
+
+    @property
+    def unresolved_mutuals_path(self) -> Path:
+        return self.artifact("unresolved_mutuals.jsonl")
 
     @property
     def scored_people_path(self) -> Path:

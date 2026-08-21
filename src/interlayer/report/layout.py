@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 import igraph as ig
 
-from interlayer.models import GraphEdge
+from interlayer.models import GraphEdge, Provenance
 
 __all__ = ["VIEW", "GraphLayout", "LaidOutNode", "build_layout", "is_observed_edge"]
 
@@ -75,14 +75,13 @@ class GraphLayout:
 def is_observed_edge(edge: GraphEdge) -> bool:
     """Whether an edge is a human-read bridge rather than an inference.
 
-    ``GraphEdge`` carries no ``provenance`` field (a scaffold gap — reported),
-    so observedness is read off the absence of an inferential basis: every
-    inferred edge is built from a shared affiliation and therefore carries at
-    least one ``shared_org_ids`` entry or one ``kinds`` entry, while a Tier-2
-    bridge has neither. The test is deliberately one-sided — anything ambiguous
-    is treated as inferred, because mislabelling an inference as observed is the
-    failure that matters.
+    Reads the provenance the graph stage recorded. The fallback on the absence of
+    an inferential basis covers edges written before that field existed, and is
+    deliberately one-sided: anything ambiguous reads as inferred, because
+    mislabelling an inference as observed is the failure that matters.
     """
+    if edge.provenance is Provenance.OBSERVED:
+        return True
     return not edge.shared_org_ids and not edge.kinds
 
 

@@ -61,8 +61,10 @@ __all__ = [
     "Seniority",
     "TargetFirm",
     "TargetPerson",
+    "UnresolvedMutual",
     "normalize_key",
     "stable_id",
+    "stable_id_exact",
 ]
 
 
@@ -94,10 +96,26 @@ def stable_id(kind: str, *parts: str | None) -> str:
 
     Stable across processes and runs (BLAKE2b, not ``hash()``), so every stage
     derives the same id for the same entity without a shared counter.
+
+    Parts are folded with :func:`normalize_key` first, which casefolds. That is
+    right for names and employer strings, where case is presentation. It is wrong
+    for opaque identifiers — use :func:`stable_id_exact` for those.
     """
     payload = "\x1f".join([kind, *(normalize_key(p) if p else "" for p in parts)])
     digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).hexdigest()
     return f"{kind}_{digest}"
+
+
+def stable_id_exact(kind: str, *parts: str | None) -> str:
+    """Content-addressed id over parts taken **verbatim**, without folding.
+
+    For opaque identifiers where case carries meaning. LinkedIn member URNs
+    (``/in/ACoAAB…``) are the motivating case: casefolding them merges two
+    distinct people into one record.
+    """
+    payload = "\x1f".join([kind, *((p or "") for p in parts)])
+    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).hexdigest()
+    return f"{kind}_exact_{digest}"
 
 
 # --------------------------------------------------------------------------
@@ -196,6 +214,25 @@ class ApproxDate(Base):
     def sort_key(self) -> int:
         """Monotone integer for ordering; missing parts sort to the start."""
         return self.year * 10_000 + (self.month or 0) * 100 + (self.day or 0)
+
+    @property
+    def span_start(self) -> int:
+        """First instant this date could mean.
+
+        A coarse LinkedIn date names a period, not a moment: ``2019`` means all
+        of 2019. Treating it as 2019-01-01 for both ends of a comparison makes a
+        real overlap disappear, so spans are compared, not points.
+        """
+        return self.year * 10_000 + (self.month or 1) * 100 + (self.day or 1)
+
+    @property
+    def span_end(self) -> int:
+        """Last instant this date could mean: year-end, month-end, or the day."""
+        if self.month is None:
+            return self.year * 10_000 + 12 * 100 + 31
+        if self.day is None:
+            return self.year * 10_000 + self.month * 100 + 31
+        return self.year * 10_000 + self.month * 100 + self.day
 
     def to_date(self) -> date:
         """Concrete date, defaulting missing month/day to January 1st."""
@@ -303,9 +340,11 @@ class Person(Base):
             slug = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1] or None
             kw["linkedin_slug"] = slug
         full = " ".join(p for p in (first_name, last_name) if p).strip()
-        ident = slug or kw.get("email") or full
+        # A slug is an opaque identifier, so it is hashed verbatim; the email and
+        # name fallbacks are presentation strings and are folded.
+        pid = stable_id_exact("p", slug) if slug else stable_id("p", kw.get("email") or full)
         return cls(
-            person_id=stable_id("p", ident),
+            person_id=pid,
             first_name=first_name,
             last_name=last_name,
             full_name=kw.pop("full_name", full),
@@ -336,8 +375,14 @@ class Affiliation(Base):
     org_id: str
     kind: AffiliationKind
     title: str | None = None
+    seniority: Seniority = Seniority.UNKNOWN
     start: ApproxDate | None = None
     end: ApproxDate | None = None
+    is_current: bool = False
+    """Still there. Distinct from an unrecorded end date, which is merely unknown:
+    two people both currently at a firm genuinely overlap and must not be damped
+    as though their dates were missing."""
+
     weight: NonNegativeFloat = 1.0
 
     @property
@@ -345,13 +390,22 @@ class Affiliation(Base):
         return stable_id("aff", self.person_id, self.org_id, str(self.kind), str(self.start or ""))
 
     def overlaps(self, other: Affiliation) -> bool:
-        """True when two affiliations share an org and their spans intersect."""
+        """True when two affiliations share an org and their date spans intersect.
+
+        Compares spans rather than points. A year-only ``2019`` covers the whole
+        of 2019, so it overlaps ``2019-06`` to ``2020``; comparing both ends at
+        2019-01-01 would report no overlap and silently drop a real seven-month
+        co-tenure.
+
+        An affiliation marked current has no end, which is different from an end
+        that was never recorded, though both are open on the right here.
+        """
         if self.org_id != other.org_id:
             return False
-        a0 = self.start.sort_key if self.start else 0
-        a1 = self.end.sort_key if self.end else 99_999_999
-        b0 = other.start.sort_key if other.start else 0
-        b1 = other.end.sort_key if other.end else 99_999_999
+        a0 = self.start.span_start if self.start else 0
+        a1 = self.end.span_end if self.end else 99_999_999
+        b0 = other.start.span_start if other.start else 0
+        b1 = other.end.span_end if other.end else 99_999_999
         return a0 <= b1 and b0 <= a1
 
 
@@ -371,6 +425,14 @@ class TargetPerson(Base):
     seniority: Seniority = Seniority.UNKNOWN
     mutual_count: NonNegativeInt | None = None
 
+    @field_validator("linkedin_url")
+    @classmethod
+    def _strip_query(cls, v: str | None) -> str | None:
+        """Match Person's normalisation. An asymmetry here is a determinism trap:
+        the same profile would round-trip differently depending on which model
+        held it."""
+        return v.split("?", 1)[0].rstrip("/") if v else v
+
     @classmethod
     def make(cls, full_name: str, firm: TargetFirm, **kw: Any) -> TargetPerson:
         slug = kw.get("linkedin_slug")
@@ -379,7 +441,11 @@ class TargetPerson(Base):
             slug = url.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1] or None
             kw["linkedin_slug"] = slug
         return cls(
-            target_person_id=stable_id("t", slug or full_name, str(firm)),
+            target_person_id=(
+                stable_id_exact("t", slug, str(firm))
+                if slug
+                else stable_id("t", full_name, str(firm))
+            ),
             full_name=full_name,
             firm=firm,
             **kw,
@@ -418,6 +484,22 @@ class MutualObservation(Base):
         return self.stated_count is not None and len(self.bridge_person_ids) < self.stated_count
 
 
+class UnresolvedMutual(Base):
+    """A name the operator recorded that could not be tied to a known person.
+
+    Surfaced rather than dropped: a mutual connection this tool failed to match
+    is a gap in the operator's picture, and silently discarding it would present
+    an incomplete result as a complete one.
+    """
+
+    raw_text: str
+    target_person_id: str | None = None
+    reason: Literal["no_match", "ambiguous_name", "not_a_connection", "malformed"] = "no_match"
+    candidates: tuple[str, ...] = ()
+    hint: str | None = None
+    source_line: NonNegativeInt | None = None
+
+
 # --------------------------------------------------------------------------
 # graph
 # --------------------------------------------------------------------------
@@ -439,6 +521,10 @@ class GraphEdge(Base):
     weight: NonNegativeFloat = 1.0
     shared_org_ids: tuple[str, ...] = ()
     kinds: tuple[AffiliationKind, ...] = ()
+    provenance: Provenance = Provenance.INFERRED
+    """Set by the graph stage. Recorded rather than re-derived, because two
+    stages independently guessing whether an edge is an observed bridge will
+    eventually disagree."""
 
     @model_validator(mode="after")
     def _canonical_orientation(self) -> Self:
