@@ -1,0 +1,55 @@
+# ============================================================
+# interlayer — personal data must never enter version control.
+# Rules are ordered: broad denials first, narrow allowances last.
+# ============================================================
+
+# --- LinkedIn exports & any raw personal data ---
+# NOTE: `/data/*` (not `/data/`) — git cannot re-include a file inside an
+# excluded directory, so the directory itself must stay traversable.
+/data/*
+!/data/gazetteer/
+*LinkedInDataExport*
+Connections.csv
+Contacts.csv
+Invitations.csv
+messages.csv
+
+# --- Generated artifacts, reports, state ---
+/artifacts/
+/exports/
+/out/
+/.interlayer/
+*.sqlite
+*.sqlite3
+*.db
+
+# --- Belt-and-braces: no spreadsheets anywhere except fixtures & gazetteer ---
+*.csv
+*.tsv
+*.xlsx
+!/tests/fixtures/**/*.csv
+!/data/gazetteer/**/*.csv
+!/data/gazetteer/**/*.tsv
+
+# --- Secrets & keys ---
+.env
+.env.*
+*.key
+*.pem
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# --- Editors / OS ---
+.DS_Store
+.idea/
+.vscode/
