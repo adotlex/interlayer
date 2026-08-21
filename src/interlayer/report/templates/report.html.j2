@@ -1,0 +1,539 @@
+{#-
+  The whole report, as one file with nothing to fetch.
+
+  Constraints this template exists inside:
+    * Zero external references. No <script>, no <link>, no <img>, no @font-face,
+      no url(). System font stacks only. `assert_self_contained()` in
+      pipeline.py enforces this on the rendered output and refuses to write a
+      file that breaks it.
+    * The mandated CSP is `default-src 'none'` with no script-src, so no
+      JavaScript runs here at all. Interaction is <details>, :target, and CSS
+      sibling selectors driven by real checkboxes and radios -- which is also
+      why the control inputs sit as direct children of .netpanel: `~` only
+      reaches forward through siblings.
+    * Nothing in the body may vary between two runs of the same input, so there
+      is no timestamp anywhere on the page. The run clock lives in manifest.json.
+
+  Observed vs inferred is carried four independent ways, so no single failure
+  (greyscale printing, colour blindness, copy-paste into a plain-text mail)
+  loses it: separate sections, a text badge on every row and every evidence
+  line, a hatched background plus dashed rule for inference against a solid
+  ink rail for observation, and a confidence band that inference is
+  arithmetically unable to reach.
+-#}
+{% macro person_table(rows) %}
+<div class="tablewrap">
+<table class="rank">
+  <thead><tr>
+    <th>#</th>
+    <th>Person</th>
+    <th>Confidence</th>
+    <th class="num">Score</th>
+    {% for label in firm_columns %}<th class="num firm">{{ label }}</th>{% endfor %}
+    <th>Cluster</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr class="row {{ 'obs' if r.observed else 'inf' }}" id="{{ r.anchor }}">
+    <td class="rk">{{ r.rank if r.rank else loop.index }}</td>
+    <td>
+      <span class="who">{{ r.label }}</span>
+      <span class="prov {{ 'prov-obs' if r.observed else 'prov-inf' }}">{{ 'OBSERVED · human-read' if r.observed else 'INFERRED — not observed' }}</span>
+      {% if r.get('employer') %}
+      <span class="meta">employer field reads <span class="hedge">{{ r.get('employer') }}</span></span>
+      {% endif %}
+      <span class="meta stale">{{ r.stale_note }}</span>
+    </td>
+    <td><span class="pill p-{{ r.band }}">{{ band_labels[r.band] }} · {{ "%.2f"|format(r.confidence) }}</span></td>
+    <td class="num">{{ "%.3f"|format(r.score) }}</td>
+    {% for value in r.per_firm %}
+    <td class="num {{ 'zero' if value == 0 else '' }}">{{ "%.2f"|format(value) }}</td>
+    {% endfor %}
+    <td>{% if r.cluster_label %}<a href="#{{ r.cluster_anchor }}">{{ r.cluster_label }}</a>{% else %}<span class="zero">—</span>{% endif %}</td>
+  </tr>
+  <tr class="ev {{ 'obs' if r.observed else 'inf' }}">
+    <td></td>
+    <td colspan="{{ 6 + firm_columns | length }}">
+      {% if r.evidence %}
+      <details class="why">
+        <summary>Why? — {{ r.n_evidence }} evidence item{{ '' if r.n_evidence == 1 else 's' }}{% if r.hops is not none %} · {{ r.hops }} hops to a target{% endif %}</summary>
+        <ol class="evid">
+          {% for e in r.evidence %}
+          <li>
+            <span class="prov {{ 'prov-obs' if e.observed else 'prov-inf' }}">{{ 'OBSERVED' if e.observed else 'INFERRED' }}</span>
+            <span class="ekind">{{ evidence_labels.get(e.kind, e.kind) }}</span>
+            <span class="ew">+{{ "%.2f"|format(e.contribution) }}</span>
+            {% if e.detail %}<span class="edetail {{ '' if e.observed else 'hedge' }}">{{ e.detail }}</span>{% endif %}
+          </li>
+          {% endfor %}
+        </ol>
+        <p class="ew" style="margin:.4rem 0 0">components — direct {{ "%.2f"|format(r.components.direct) }}
+          · alumni {{ "%.2f"|format(r.components.alumni) }}
+          · proximity {{ "%.2f"|format(r.components.proximity) }}
+          · cluster {{ "%.2f"|format(r.components.cluster) }}
+          · title {{ "%.2f"|format(r.components.title) }}</p>
+      </details>
+      {% else %}
+      <span class="ew">no evidence recorded — score is zero</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endmacro %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{ csp_meta | safe }}
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>{{ title }}</title>
+<style>
+:root{
+  --bg:#fbfaf9; --panel:#ffffff; --ink:#191817; --dim:#5d5954; --faint:#8b857e;
+  --rule:#ddd8d1; --rule-hard:#b8b1a8;
+  --obs:#14524a; --obs-bg:#e6f0ed; --obs-ink:#0c3b35;
+  --inf:#8a5a12; --inf-bg:#fbf3e4; --inf-ink:#6b4409;
+  --warn:#8c2f1d; --warn-bg:#fbeae6;
+  --c0:#3b6ea5; --c1:#c1666b; --c2:#5a9367; --c3:#b58b3c; --c4:#7d5ba6; --c5:#4a9fa8;
+  --c6:#a0642f; --c7:#6b7f3e; --c8:#9c5d8a; --c9:#4f6f8f; --c10:#8a6a3d; --c11:#5f7d6e;
+  --cx:#9a958f;
+  --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#16181a; --panel:#1d2023; --ink:#e9e6e2; --dim:#a8a29a; --faint:#7d776f;
+    --rule:#31353a; --rule-hard:#4a5058;
+    --obs:#5fd0bd; --obs-bg:#12302c; --obs-ink:#9fe8db;
+    --inf:#e0a95a; --inf-bg:#332714; --inf-ink:#f0cd93;
+    --warn:#f0836b; --warn-bg:#3a1c16;
+  }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--sans);
+  padding:0 0 5rem}
+.wrap{max-width:74rem;margin:0 auto;padding:0 1.25rem}
+h1,h2,h3{line-height:1.2;font-weight:650;margin:0}
+h1{font-size:1.9rem;letter-spacing:-.015em}
+h2{font-size:1.2rem;margin:0 0 .35rem;letter-spacing:-.01em}
+h3{font-size:.95rem}
+p{margin:.5rem 0}
+a{color:inherit}
+
+/* ---- persistent header (§3.8 item 7) ------------------------------------ */
+.persist{position:sticky;top:0;z-index:9;margin:0;background:var(--warn-bg);
+  color:var(--warn);border-bottom:1px solid var(--warn);
+  font:600 12.5px/1.35 var(--mono);letter-spacing:.01em;padding:.5rem 1.25rem;
+  text-align:center}
+header.banner{border-bottom:1px solid var(--rule);padding:1.5rem 0 1.25rem;margin-bottom:1.25rem}
+.sub{color:var(--dim);max-width:52rem;margin:.4rem 0 0}
+.runmeta{display:flex;flex-wrap:wrap;gap:.35rem .9rem;margin:.9rem 0 0;padding:0;
+  font:11.5px/1.5 var(--mono);color:var(--faint)}
+.runmeta b{font-weight:600;color:var(--dim)}
+
+/* ---- generic blocks ----------------------------------------------------- */
+section{margin:2rem 0}
+.note{border:1px solid var(--rule);border-left:3px solid var(--rule-hard);
+  background:var(--panel);padding:.75rem .95rem;border-radius:3px;color:var(--dim);
+  font-size:13.5px}
+.note.redacted{border-left-color:var(--obs);background:var(--obs-bg);color:var(--obs-ink)}
+.eyebrow{font:600 11px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;
+  color:var(--faint);margin:0 0 .5rem}
+
+/* ---- summary tiles ------------------------------------------------------ */
+.tiles{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fit,minmax(9.5rem,1fr));
+  margin:0;padding:0;list-style:none}
+.tile{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.7rem .8rem}
+.tile .n{display:block;font:650 1.5rem/1.1 var(--sans);font-variant-numeric:tabular-nums}
+.tile .k{display:block;font-size:11.5px;color:var(--dim);margin-top:.15rem}
+.tile.t-obs{border-left:4px solid var(--obs)}
+.tile.t-obs .n{color:var(--obs)}
+.tile.t-inf{border-left:4px dashed var(--inf)}
+.tile.t-inf .n{color:var(--inf)}
+
+/* ---- provenance + band legends ------------------------------------------ */
+.legend{display:grid;gap:.6rem;grid-template-columns:repeat(auto-fit,minmax(17rem,1fr));
+  margin:0;padding:0}
+.legend div{background:var(--panel);border:1px solid var(--rule);border-radius:4px;
+  padding:.65rem .8rem;font-size:13px;color:var(--dim)}
+.legend dt{font-weight:650;color:var(--ink);margin-bottom:.2rem}
+.legend .lg-observed{border-left:4px solid var(--obs)}
+.legend .lg-inferred{border-left:4px dashed var(--inf);
+  background:repeating-linear-gradient(135deg,transparent 0 7px,var(--inf-bg) 7px 14px)}
+
+/* ---- provenance badge: text first, colour second ------------------------ */
+.prov{display:inline-block;font:650 10px/1.6 var(--mono);letter-spacing:.06em;
+  padding:0 .35rem;border-radius:2px;white-space:nowrap;vertical-align:.06em}
+.prov-obs{background:var(--obs);color:var(--bg)}
+.prov-inf{background:var(--inf-bg);color:var(--inf-ink);
+  border:1px dashed var(--inf);line-height:1.4}
+
+/* ---- confidence pill ---------------------------------------------------- */
+.pill{display:inline-block;font:600 11.5px/1.7 var(--mono);padding:0 .45rem;
+  border-radius:10px;white-space:nowrap;border:1px solid currentColor}
+.p-strong{color:var(--obs);background:var(--obs-bg)}
+.p-moderate{color:var(--inf-ink);background:var(--inf-bg)}
+.p-weak{color:var(--dim);background:transparent}
+.p-speculative{color:var(--faint);background:transparent;border-style:dashed}
+
+/* ---- ranked tables ------------------------------------------------------ */
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:4px;background:var(--panel)}
+table.rank{border-collapse:collapse;width:100%;min-width:56rem;font-size:13.5px}
+table.rank th{text-align:left;font:600 11px/1.4 var(--mono);letter-spacing:.05em;
+  text-transform:uppercase;color:var(--faint);padding:.55rem .6rem;
+  border-bottom:1px solid var(--rule-hard);white-space:nowrap;vertical-align:bottom}
+table.rank td{padding:.5rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--mono);font-size:12.5px}
+th.firm{color:var(--ink)}
+tr.row td:first-child{border-left:4px solid transparent}
+tr.obs td:first-child{border-left-color:var(--obs)}
+tr.inf td:first-child{border-left:4px dashed var(--inf)}
+tr.inf{background:repeating-linear-gradient(135deg,transparent 0 9px,var(--inf-bg) 9px 18px)}
+tr.row:target td{background:var(--obs-bg);box-shadow:inset 0 0 0 2px var(--obs)}
+.who{font-weight:650}
+.meta{display:block;font-size:11.5px;color:var(--dim);margin-top:.15rem}
+.stale{font-family:var(--mono);font-size:11px;color:var(--faint)}
+.rk{font-family:var(--mono);color:var(--faint);font-size:12px}
+.zero{color:var(--faint)}
+
+/* ---- evidence disclosure (§3.8 item 3) ---------------------------------- */
+tr.ev td{padding:0 .6rem .6rem;border-bottom:1px solid var(--rule)}
+tr.ev.inf{background:repeating-linear-gradient(135deg,transparent 0 9px,var(--inf-bg) 9px 18px)}
+details.why summary{cursor:pointer;font:600 11.5px/1.7 var(--mono);color:var(--dim);
+  list-style:none;display:inline-block;border:1px solid var(--rule-hard);
+  border-radius:3px;padding:0 .5rem}
+details.why summary::-webkit-details-marker{display:none}
+details.why summary::before{content:"▸ ";color:var(--faint)}
+details.why[open] summary::before{content:"▾ "}
+ol.evid{margin:.5rem 0 0;padding:0 0 0 .2rem;list-style:none;
+  border-left:2px solid var(--rule);}
+ol.evid li{padding:.3rem 0 .3rem .7rem;font-size:12.5px;color:var(--dim)}
+ol.evid li + li{border-top:1px dotted var(--rule)}
+.ekind{font-weight:650;color:var(--ink)}
+.edetail{display:block;margin-top:.1rem}
+.ew{font-family:var(--mono);font-size:11.5px;color:var(--faint)}
+.hedge{font-style:italic;border-bottom:1px dotted var(--inf)}
+
+/* ---- empty states ------------------------------------------------------- */
+.empty{border:1px dashed var(--rule-hard);border-radius:4px;padding:1.1rem;
+  text-align:center;color:var(--dim);font-size:13.5px;background:var(--panel)}
+.empty b{display:block;color:var(--ink);margin-bottom:.2rem}
+
+/* ---- network panel ------------------------------------------------------ */
+.netpanel{position:relative;border:1px solid var(--rule);border-radius:4px;
+  background:var(--panel);overflow:hidden}
+.netpanel > .ctl{position:absolute;width:1px;height:1px;margin:-1px;padding:0;
+  overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+.netctl{display:flex;flex-wrap:wrap;gap:.4rem .8rem;align-items:center;
+  padding:.55rem .7rem;border-bottom:1px solid var(--rule);font-size:12px}
+.netctl label{cursor:pointer;border:1px solid var(--rule-hard);border-radius:3px;
+  padding:.1rem .5rem;font:600 11.5px/1.7 var(--mono);color:var(--dim);user-select:none}
+.netctl .grp{display:inline-flex;gap:.25rem}
+.netctl .hint{color:var(--faint);font-size:11.5px}
+#z1:checked ~ .netctl label[for=z1],
+#z2:checked ~ .netctl label[for=z2],
+#z3:checked ~ .netctl label[for=z3],
+#he:checked ~ .netctl label[for=he],
+#ho:checked ~ .netctl label[for=ho]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#z1:focus-visible ~ .netctl label[for=z1],
+#z2:focus-visible ~ .netctl label[for=z2],
+#z3:focus-visible ~ .netctl label[for=z3],
+#he:focus-visible ~ .netctl label[for=he],
+#ho:focus-visible ~ .netctl label[for=ho]{outline:2px solid var(--obs);outline-offset:2px}
+.netwrap{overflow:auto;max-height:min(78vh,44rem);background:var(--panel)}
+svg.net{display:block;width:100%;height:auto}
+#z2:checked ~ .netwrap svg.net{width:200%}
+#z3:checked ~ .netwrap svg.net{width:400%}
+.e-inf{stroke:var(--rule-hard);stroke-width:1.1;fill:none;opacity:.55;
+  stroke-dasharray:2.5 3.5;stroke-linecap:round}
+.e-obs{stroke:var(--obs);stroke-width:1.9;fill:none;opacity:.95}
+.nodes circle{stroke:var(--panel);stroke-width:.5}
+.rings circle{fill:none;stroke:var(--obs);stroke-width:1.8}
+.nodes .c0{fill:var(--c0)} .nodes .c1{fill:var(--c1)} .nodes .c2{fill:var(--c2)}
+.nodes .c3{fill:var(--c3)} .nodes .c4{fill:var(--c4)} .nodes .c5{fill:var(--c5)}
+.nodes .c6{fill:var(--c6)} .nodes .c7{fill:var(--c7)} .nodes .c8{fill:var(--c8)}
+.nodes .c9{fill:var(--c9)} .nodes .c10{fill:var(--c10)} .nodes .c11{fill:var(--c11)}
+.nodes g{fill:var(--cx)}
+#he:checked ~ .netwrap .e-inf{display:none}
+#ho:checked ~ .netwrap .e-inf{display:none}
+#ho:checked ~ .netwrap .nodes circle{opacity:.1}
+#ho:checked ~ .netwrap .nodes circle.ob{opacity:1}
+.swatches{display:flex;flex-wrap:wrap;gap:.3rem .8rem;padding:.55rem .7rem;
+  border-top:1px solid var(--rule);font-size:11.5px;color:var(--dim)}
+.sw{display:inline-flex;align-items:center;gap:.3rem}
+.sw i{width:.65rem;height:.65rem;border-radius:50%;display:inline-block}
+{% for entry in palette_legend %}
+.sw-{{ entry.index }} i{background:var(--c{{ entry.index % 12 }})}
+{% endfor %}
+
+/* ---- clusters ----------------------------------------------------------- */
+.cards{display:grid;gap:.75rem;grid-template-columns:repeat(auto-fit,minmax(21rem,1fr));
+  margin:0;padding:0;list-style:none}
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:4px;padding:.8rem .9rem}
+.card:target{box-shadow:inset 0 0 0 2px var(--obs)}
+.card h3{margin-bottom:.15rem}
+.card .rat{font-size:12.5px;color:var(--dim);margin:.3rem 0}
+.card ul{margin:.45rem 0 0;padding:0;list-style:none;
+  display:flex;flex-wrap:wrap;gap:.25rem .4rem;font-size:12px}
+.card ul a{display:inline-block;border:1px solid var(--rule);border-radius:2px;
+  padding:0 .35rem;font-family:var(--mono);font-size:11.5px;text-decoration:none;color:var(--dim)}
+.card ul a.ob{border-color:var(--obs);color:var(--obs);font-weight:650}
+.firmrow{display:flex;flex-wrap:wrap;gap:.25rem .5rem;margin:.5rem 0 0;font:11.5px/1.6 var(--mono)}
+.firmrow span{border:1px solid var(--rule);border-radius:2px;padding:0 .35rem;color:var(--dim)}
+
+/* ---- limitations -------------------------------------------------------- */
+.limits{counter-reset:lim;margin:0;padding:0;list-style:none}
+.limits li{counter-increment:lim;padding:.55rem 0 .55rem 2.1rem;position:relative;
+  border-bottom:1px solid var(--rule);font-size:13.5px;color:var(--dim)}
+.limits li::before{content:counter(lim);position:absolute;left:0;top:.55rem;
+  font:650 11.5px/1.5 var(--mono);color:var(--faint);border:1px solid var(--rule);
+  width:1.45rem;text-align:center;border-radius:2px}
+.limits b{color:var(--ink);display:block}
+.thumb{border:2px solid var(--warn);border-radius:4px;background:var(--warn-bg);
+  color:var(--warn);padding:.8rem .95rem;font-weight:600;font-size:13.5px;margin-top:.9rem}
+footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
+  color:var(--faint);font:11.5px/1.6 var(--mono)}
+@media print{
+  .persist{position:static}
+  .netwrap{max-height:none;overflow:visible}
+  tr.inf{background:none}
+  tr.inf td:first-child{border-left:4px double var(--inf)}
+  details.why[open] summary{border:0}
+}
+</style>
+</head>
+<body>
+
+<p class="persist">{{ header_line }}</p>
+
+<div class="wrap">
+
+<header class="banner">
+  <h1>{{ title }}</h1>
+  <p class="sub">{{ subtitle }}</p>
+  <p class="runmeta">
+    <span><b>run</b> {{ run_id }}</span>
+    <span><b>seed</b> {{ seed }}</span>
+    <span><b>mode</b> {{ 'redacted' if redact else 'identified' }}</span>
+    <span><b>tool</b> {{ tool_version }}</span>
+    <span><b>schema</b> {{ schema_version }}</span>
+    <span>run timestamp and input hashes: manifest.json</span>
+  </p>
+</header>
+
+<section>
+  <p class="note">{{ sources_note }}</p>
+  {% if redact %}
+  <p class="note redacted">{{ redaction_note }}</p>
+  {% endif %}
+</section>
+
+<section>
+  <p class="eyebrow">What is in this file</p>
+  <ul class="tiles">
+    <li class="tile t-obs"><span class="n">{{ counts.observed_people }}</span>
+      <span class="k">people with an <b>observed</b> bridge — a human read the mutual-connections list</span></li>
+    <li class="tile t-inf"><span class="n">{{ counts.inferred_people }}</span>
+      <span class="k">people this tool <b>inferred</b> are adjacent — unverified guesses</span></li>
+    <li class="tile"><span class="n">{{ counts.speculative_people }}</span>
+      <span class="k">speculative (confidence below 0.30), collapsed below</span></li>
+    <li class="tile"><span class="n">{{ counts.clusters }}</span>
+      <span class="k">clusters detected across {{ counts.people }} people</span></li>
+    <li class="tile t-obs"><span class="n">{{ counts.observed_edges }}</span>
+      <span class="k">observed bridge edges</span></li>
+    <li class="tile t-inf"><span class="n">{{ counts.inferred_edges }}</span>
+      <span class="k">inferred edges (affiliation overlap, not relationships)</span></li>
+  </ul>
+</section>
+
+<section>
+  <p class="eyebrow">How to read every claim below</p>
+  <dl class="legend">
+    {% for slug, label, body in provenance_legend %}
+    <div class="lg-{{ slug }}">
+      <dt><span class="prov prov-{{ 'obs' if slug == 'observed' else 'inf' }}">{{ label }}</span></dt>
+      <dd style="margin:0">{{ body }}</dd>
+    </div>
+    {% endfor %}
+  </dl>
+  <dl class="legend" style="margin-top:.6rem">
+    {% for slug, label, body in band_legend %}
+    <div><dt><span class="pill p-{{ slug }}">{{ label }}</span></dt><dd style="margin:0">{{ body }}</dd></div>
+    {% endfor %}
+  </dl>
+  <p class="note" style="margin-top:.6rem">Confidence is <b>1.00 only for observed readings</b>. Inference is capped
+  at 0.79 by construction, so nothing this tool guessed can ever appear in the Strong band, however many
+  weak signals pile up. The confidence number is derived from the <i>kinds</i> of evidence present, never
+  from the score — the score is a ranking within your own data, not a probability.</p>
+</section>
+
+{# ---------------------------------------------------------------- network #}
+<section id="network">
+  <h2>Network</h2>
+  <p class="sub" style="margin-bottom:.7rem">Positions come from a seeded Fruchterman-Reingold layout computed
+  before this file was written; they encode graph structure, not anything about the people.
+  Colour is cluster membership only. <b>Solid dark lines are observed bridges. Dashed pale lines are inferred
+  and may not correspond to any real relationship.</b></p>
+
+  <div class="netpanel">
+    <input type="radio" name="zoom" id="z1" class="ctl" checked>
+    <input type="radio" name="zoom" id="z2" class="ctl">
+    <input type="radio" name="zoom" id="z3" class="ctl">
+    <input type="checkbox" id="he" class="ctl">
+    <input type="checkbox" id="ho" class="ctl">
+    <div class="netctl">
+      <span class="grp"><label for="z1">Fit</label><label for="z2">2&times;</label><label for="z3">4&times;</label></span>
+      <label for="he">Hide inferred edges</label>
+      <label for="ho">Observed only</label>
+      <span class="hint">{{ counts.graph_nodes }} nodes · {{ counts.graph_edges }} edges · hover a node for its
+      name{% if counts.graph_omitted %} · {{ counts.graph_omitted }} lowest-ranked nodes omitted for legibility{% endif %}</span>
+    </div>
+    <div class="netwrap">
+      {% if node_groups %}
+      <svg class="net" viewBox="0 0 1000 1000" role="img"
+           aria-label="Force-directed layout of {{ counts.graph_nodes }} people. Dashed lines are inferred links; solid lines are observed bridges.">
+        {% if inferred_d %}<path class="e-inf" d="{{ inferred_d }}"/>{% endif %}
+        {% if observed_d %}<path class="e-obs" d="{{ observed_d }}"/>{% endif %}
+        <g class="nodes">
+        {% for grp in node_groups %}
+          <g class="c{{ (grp.cluster % 12) if grp.cluster >= 0 else -1 }}">
+          {%- for n in grp.nodes -%}
+          <circle cx="{{ n.x }}" cy="{{ n.y }}" r="{{ n.r }}"{% if n.observed %} class="ob"{% endif %}><title>{{ n.label }}{% if n.observed %} (observed bridge){% endif %}</title></circle>
+          {%- endfor -%}
+          </g>
+        {% endfor %}
+        </g>
+        <g class="rings">
+        {%- for grp in node_groups -%}{%- for n in grp.nodes -%}{% if n.observed %}<circle cx="{{ n.x }}" cy="{{ n.y }}" r="{{ "%.1f"|format(n.r + 2.6) }}"/>{% endif %}{%- endfor -%}{%- endfor -%}
+        </g>
+      </svg>
+      {% else %}
+      <p class="empty" style="margin:1.5rem"><b>No graph to draw.</b>
+      There are no edges and no scored people in these artifacts.</p>
+      {% endif %}
+    </div>
+    {% if palette_legend %}
+    <p class="swatches">
+      {% for entry in palette_legend %}
+      <span class="sw sw-{{ entry.index }}"><i></i>{{ entry.label }}</span>
+      {% endfor %}
+      <span class="sw"><i style="background:var(--cx)"></i>other / unclustered</span>
+    </p>
+    {% endif %}
+  </div>
+</section>
+
+{# ------------------------------------------------------------ observed --- #}
+<section id="observed">
+  <h2>Observed bridges <span class="prov prov-obs">OBSERVED · human-read</span></h2>
+  <p class="sub" style="margin-bottom:.7rem">Each of these is a mutual connection a person read off LinkedIn's own
+  interface. The bridge exists. What it is worth — whether they would actually make an introduction — is still
+  a question only you can answer.</p>
+  {% if observed_rows %}
+  {{ person_table(observed_rows) }}
+  {% else %}
+  <p class="empty"><b>No observed bridges in this run.</b>
+  Nothing below has been verified by a human. Every row in the rest of this report is a guess this tool made
+  from employer strings and timing. Collect mutual-connection observations to get results that are true by
+  construction rather than probable.</p>
+  {% endif %}
+</section>
+
+{# ------------------------------------------------------------ inferred --- #}
+<section id="inferred">
+  <h2>Inferred leads <span class="prov prov-inf">INFERRED — not observed</span></h2>
+  <p class="sub" style="margin-bottom:.7rem">Derived by this tool from employer strings, alumni overlap, timing and
+  clustering. <b>No relationship has been observed and none is implied.</b> Sorted by confidence, then score.
+  Top {{ top_n }} of {{ counts.inferred_people }}.</p>
+  {% if inferred_rows %}
+  {{ person_table(inferred_rows) }}
+  {% else %}
+  <p class="empty"><b>Nothing reached the weak-signal threshold.</b>
+  Either the export contains no one adjacent to the target firms, or normalisation failed to recognise the
+  employers it does contain. Check <span style="font-family:var(--mono)">orgs.jsonl</span> before concluding
+  the former.</p>
+  {% endif %}
+</section>
+
+{# --------------------------------------------------------- speculative --- #}
+{% if speculative_rows %}
+<section id="speculative">
+  <details>
+    <summary><h2 style="display:inline">Speculative ({{ counts.speculative_people }})</h2></summary>
+    <p class="sub">Confidence below 0.30. Collapsed by default because at this level the signal is
+    indistinguishable from noise, and a name in a list acquires weight it has not earned. Showing the first
+    {{ speculative_rows | length }}.</p>
+    {{ person_table(speculative_rows) }}
+  </details>
+</section>
+{% endif %}
+
+{# ------------------------------------------------------------ clusters --- #}
+<section id="clusters">
+  <h2>Clusters</h2>
+  <p class="sub" style="margin-bottom:.7rem">Communities detected in the inferred graph, ranked by mean adjacency
+  mass. Cluster membership is itself an inference: people in one cluster share affiliation patterns, which is
+  not the same as knowing each other.
+  {% if counts.clusters_suppressed %}{{ counts.clusters_suppressed }} cluster(s) with fewer than three members
+  are suppressed in redacted mode — a cluster of one with a company label is a re-identification.{% endif %}</p>
+  {% if cluster_rows %}
+  <ul class="cards">
+    {% for c in cluster_rows %}
+    <li class="card" id="{{ c.anchor }}">
+      <h3>Possible {{ c.label }}</h3>
+      <p class="rat"><span class="pill p-{{ c.band }}">{{ band_labels[c.band] }} · {{ "%.2f"|format(c.mean_confidence) }} mean</span>
+        <span class="rk">{{ c.size }} people</span>
+        {% if c.observed_members %}<span class="prov prov-obs">{{ c.observed_members }} OBSERVED</span>
+        {% else %}<span class="prov prov-inf">ALL INFERRED</span>{% endif %}</p>
+      <p class="rat"><span class="hedge">{{ c.rationale }}</span></p>
+      <p class="firmrow">
+        {% for label in firm_columns %}
+        <span>{{ label }} {{ "%.2f"|format(c.per_firm[loop.index0]) }}</span>
+        {% endfor %}
+      </p>
+      {% if c.top_orgs %}
+      <p class="rat" style="font-family:var(--mono);font-size:11.5px">
+        {% for o in c.top_orgs %}{{ o.label }} ({{ o.count }}){% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+      {% endif %}
+      {% if c.members %}
+      <ul>{% for m in c.members %}<li><a class="{{ 'ob' if m.observed else '' }}" href="#{{ m.anchor }}">{{ m.label }}</a></li>{% endfor %}</ul>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty"><b>No clusters.</b> The graph had no community structure to find, or every cluster fell below
+  the minimum size.</p>
+  {% endif %}
+  <p class="note" style="margin-top:.8rem">{{ firm_note }}</p>
+</section>
+
+{# --------------------------------------------------------- limitations --- #}
+<section id="limitations">
+  <h2>Limitations — read before acting on anything above</h2>
+  <p class="sub">Everything here is inferred. Nothing here is verified.</p>
+  <ol class="limits">
+    {% for head, body in limitations %}
+    <li><b>{{ head }}</b>{{ body }}</li>
+    {% endfor %}
+  </ol>
+  <p class="thumb">{{ rule_of_thumb }}</p>
+  <p class="note" style="margin-top:.8rem">{{ not_built_for }}</p>
+</section>
+
+<footer>
+  interlayer {{ tool_version }} · schema {{ schema_version }} · run {{ run_id }} · seed {{ seed }} ·
+  {{ counts.people }} people · {{ counts.edges }} edges · {{ counts.clusters }} clusters ·
+  no scripts, no fonts, no images, no network. Provenance: manifest.json.
+</footer>
+
+</div>
+</body>
+</html>

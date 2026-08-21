@@ -23,6 +23,7 @@ import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from interlayer import __version__
@@ -226,19 +227,23 @@ def run(cfg: Settings) -> None:
         }
     )
 
-    html = _environment().get_template("report.html.j2").render(
-        csp_meta=CSP_META,
-        title=text.REPORT_TITLE,
-        subtitle=text.REPORT_SUBTITLE,
-        header_line=text.HEADER_LINE,
-        firm_note=text.FIRM_NOTE,
-        sources_note=text.SOURCES_NOTE,
-        redaction_note=text.REDACTION_NOTE,
-        not_built_for=text.NOT_BUILT_FOR,
-        rule_of_thumb=text.RULE_OF_THUMB,
-        tool_version=__version__,
-        schema_version=SCHEMA_VERSION,
-        **context,
+    html = (
+        _environment()
+        .get_template("report.html.j2")
+        .render(
+            csp_meta=CSP_META,
+            title=text.REPORT_TITLE,
+            subtitle=text.REPORT_SUBTITLE,
+            header_line=text.HEADER_LINE,
+            firm_note=text.FIRM_NOTE,
+            sources_note=text.SOURCES_NOTE,
+            redaction_note=text.REDACTION_NOTE,
+            not_built_for=text.NOT_BUILT_FOR,
+            rule_of_thumb=text.RULE_OF_THUMB,
+            tool_version=__version__,
+            schema_version=SCHEMA_VERSION,
+            **context,
+        )
     )
     assert_self_contained(html)
 

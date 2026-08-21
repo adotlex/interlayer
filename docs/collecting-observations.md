@@ -43,19 +43,20 @@ Open the company **People** tab and filter to 2nd degree.
 |---|---|
 | Citadel LLC — the hedge fund | `linkedin.com/company/citadel-llc/people/` |
 | Citadel Securities — the market maker | `linkedin.com/company/citadel-securities/people/` |
-| Jane Street | `linkedin.com/company/jane-street/people/` ⚠️ **slug unverified** |
+| Jane Street | `linkedin.com/company/jane-street-global/people/` |
 
 > ⚠️ **Citadel is two companies.** Citadel LLC (the fund, est. 1990) and Citadel
 > Securities (the market maker, est. 2002) have separate pages, separate staff
 > and separate slugs. interlayer keeps them apart deliberately and will **reject**
 > a bare `citadel` in your file. Pick one.
 
-> ⚠️ **Verify the Jane Street slug before you rely on it.** The research
-> ([`docs/research/01-linkedin-data-access.md` §3.4](research/01-linkedin-data-access.md))
-> records `jane-street` as **UNVERIFIED — MUST CHECK**, and the gazetteer carries
-> `jane-street-global` plus the legacy pages `jane-street-capital-llc` and
-> `janestreetgroup`. Just type "Jane Street" into LinkedIn search, open the
-> company with ~3.7k employees, and use whatever slug the address bar shows.
+> **On the Jane Street slug.** The canonical page is `jane-street-global` — its
+> `/life` and `/jobs` subpages resolve under that slug and it carries the ~444k
+> follower count. The research document's `jane-street` guess was wrong, and the
+> gazetteer's value is correct. Legacy pages `jane-street-capital-llc` and
+> `janestreetgroup` also exist and carry a thin subset of staff; prefer the
+> canonical page, and if the address bar shows something else, trust the address
+> bar and tell us.
 
 On the People tab:
 

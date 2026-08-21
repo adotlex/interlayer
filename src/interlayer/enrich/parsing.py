@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -89,7 +90,9 @@ def observation_candidates(cfg: Settings) -> tuple[Path, ...]:
     already excludes ``/data/*``, so third-party names cannot reach git by
     accident.
     """
-    roots = (Path.cwd(), cfg.artifact_dir.parent)
+    roots: list[Path] = [cfg.artifact_dir.parent]
+    with suppress(OSError):  # cwd can be gone underneath a test that chdir'd
+        roots.insert(0, Path.cwd())
     out: list[Path] = []
     for root in roots:
         for stem in _STEMS:

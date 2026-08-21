@@ -189,7 +189,7 @@ def _resolve_person_strings(
             cache[key] = result
         first.append(result)
 
-    corroborating = frozenset(r.entity_key for r in first if r.firm_key is not None)
+    corroborating = frozenset(firm for r in first if (firm := r.firm_key) is not None)
     out: list[tuple[AffiliationKind, str, str, MatchResult]] = []
     for (kind, raw_text, title), result in zip(strings, first, strict=True):
         retryable = (
@@ -357,7 +357,8 @@ def run(cfg: Settings) -> None:
 
     write_jsonl(cfg.orgs_path, orgs)
     write_jsonl(cfg.affiliations_path, affiliations)
-    write_jsonl(_review_path(cfg), sorted(reviews, key=lambda item: item.sort_key))
+    ordered_reviews: list[ReviewItem] = sorted(reviews, key=lambda item: item.sort_key)
+    write_jsonl(_review_path(cfg), ordered_reviews)
 
     log.info(
         "normalize: %d people -> %d orgs (%d target), %d affiliations, %d for review (%s)",

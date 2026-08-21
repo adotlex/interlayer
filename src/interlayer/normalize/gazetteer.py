@@ -104,12 +104,22 @@ class Entity:
             return None
 
     @property
+    def is_specific_org(self) -> bool:
+        """True when this record names one organisation rather than a category.
+
+        Two negative entries are deliberately *buckets*: ``jane_street_generic``
+        stands for every business on a road called Jane Street, and
+        ``citadel_security_generic`` for the thousands of unrelated security
+        firms. Both carry ``linkedin_slug: null`` because no single page exists
+        for them. Building an Org out of a bucket would put a barista and a
+        dentist in the same company and hand the graph stage a co-employment
+        edge between them, so a bucket may veto a string but may never name one.
+        """
+        return self.is_firm or self.linkedin_slug is not None
+
+    @property
     def org_kind(self) -> OrgKind:
-        if self.entity_type in _EDUCATION_TYPES:
-            return OrgKind.SCHOOL
-        if self.entity_type == "unrelated":
-            return OrgKind.UNKNOWN
-        return OrgKind.COMPANY
+        return OrgKind.SCHOOL if self.entity_type in _EDUCATION_TYPES else OrgKind.COMPANY
 
     @property
     def linkedin_url(self) -> str | None:

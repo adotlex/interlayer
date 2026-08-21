@@ -167,7 +167,9 @@ def _load_or_create_key(path: Path) -> bytes:
         try:
             key = bytes.fromhex(raw)
         except ValueError as exc:
-            raise InterlayerError(f"pseudonym key at {path} is corrupt; delete it to regen") from exc
+            raise InterlayerError(
+                f"pseudonym key at {path} is corrupt; delete it to regen"
+            ) from exc
         if len(key) >= 32:
             if stat.S_IMODE(path.stat().st_mode) != 0o600:
                 path.chmod(0o600)

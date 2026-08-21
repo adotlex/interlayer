@@ -30,8 +30,7 @@ __all__ = [
 REPORT_TITLE = "interlayer — network report"
 
 REPORT_SUBTITLE = (
-    "A ranked set of hypotheses about your own LinkedIn connections. "
-    "Not a set of findings."
+    "A ranked set of hypotheses about your own LinkedIn connections. Not a set of findings."
 )
 
 #: §3.8 item 7 requires a persistent header on every generated report. The
@@ -39,9 +38,7 @@ REPORT_SUBTITLE = (
 #: clock in the document body would break byte-identical reruns. The run
 #: timestamp lives in ``manifest.json`` next to this file, which is also where
 #: an auditor would look for it.
-HEADER_LINE = (
-    "Inferred from your LinkedIn export. Not verified. Not observed. Check before acting."
-)
+HEADER_LINE = "Inferred from your LinkedIn export. Not verified. Not observed. Check before acting."
 
 FIRM_NOTE = (
     "Citadel LLC (the hedge fund) and Citadel Securities (the market maker) are separate "
