@@ -23,10 +23,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AnyContract, Handlers } from '../../src/core/types.ts';
 import {
-  capability,
   type Capability,
   type CapabilityName,
   type Contract,
+  capability,
   createLayer,
   defineContract,
   defineProvider,
@@ -148,9 +148,7 @@ function constraintProbe() {
 type ConstraintProbe = ReturnType<typeof constraintProbe>;
 
 /** The naive constraint is perfectly happy with a `type` alias… */
-type C13_NaiveAcceptsTypeAlias = Expect<
-  Equal<ConstraintProbe['naiveWithTypeAlias'], TypeContract>
->;
+type C13_NaiveAcceptsTypeAlias = Expect<Equal<ConstraintProbe['naiveWithTypeAlias'], TypeContract>>;
 /** …and the F-bounded form takes the `type` alias AND the `interface`. */
 type C14_FBoundedKeepsType = Expect<Equal<ConstraintProbe['fBoundedWithTypeAlias'], TypeContract>>;
 type C15_FBoundedKeepsInterface = Expect<
@@ -182,9 +180,7 @@ type C16_IndexSignatureCollapsesKeys = Expect<
   Equal<CapabilityName<InheritsIndexSignature>, string>
 >;
 /** The declared pairs still resolve; it is the KEY SET that stopped checking. */
-type C17_DeclaredPairsStillResolve = Expect<
-  Equal<InputOf<InheritsIndexSignature, 'chat'>, ChatIn>
->;
+type C17_DeclaredPairsStillResolve = Expect<Equal<InputOf<InheritsIndexSignature, 'chat'>, ChatIn>>;
 /** A key nobody declared resolves to `unknown` instead of erroring. */
 type C18_UndeclaredKeyResolvesToUnknown = Expect<
   Equal<InputOf<InheritsIndexSignature, 'never-declared'>, unknown>

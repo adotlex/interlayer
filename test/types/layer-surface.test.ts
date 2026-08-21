@@ -12,9 +12,9 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  capability,
   type CallOptions,
   type CallResult,
+  capability,
   createLayer,
   defineContract,
   defineProvider,

@@ -141,9 +141,7 @@ const satisfiesLayer = createLayer({
   runtime: createFakeRuntime(),
 });
 
-type S06_SatisfiesKeepsElementPrecision = Expect<
-  Equal<(typeof checked)[number], typeof openai>
->;
+type S06_SatisfiesKeepsElementPrecision = Expect<Equal<(typeof checked)[number], typeof openai>>;
 type S07_SatisfiesLayerIsExact = Expect<
   Equal<typeof satisfiesLayer, Layer<Ai, 'openai', 'chat' | 'embed'>>
 >;
@@ -228,7 +226,9 @@ const bareSatisfies = {
 } satisfies Provider<Ai>;
 
 /** The capability set is exact — this half of `satisfies` works. */
-type S09_BareSatisfiesKeepsCapabilities = Expect<Equal<ImplementedBy<typeof bareSatisfies>, 'chat'>>;
+type S09_BareSatisfiesKeepsCapabilities = Expect<
+  Equal<ImplementedBy<typeof bareSatisfies>, 'chat'>
+>;
 /** The id is NOT. `'handrolled'` widened to `string`. THIS IS THE DEFECT. */
 type S10_BareSatisfiesWidensId = Expect<Equal<ProviderId<typeof bareSatisfies>, string>>;
 
@@ -261,7 +261,11 @@ function bareSatisfiesLayerFailsOpenOnIds(): unknown {
 
 /** With `as const satisfies`, the same mistake is caught. */
 function constSatisfiesLayerChecksIds(): unknown {
-  const l = createLayer({ contract: ai, providers: [constSatisfies], runtime: createFakeRuntime() });
+  const l = createLayer({
+    contract: ai,
+    providers: [constSatisfies],
+    runtime: createFakeRuntime(),
+  });
   // S-N06 — the id union is real again.
   // @ts-expect-error TS2345: '"nope"' is not assignable to parameter of type '"handrolled"'
   return l.only('nope');

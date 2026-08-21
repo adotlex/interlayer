@@ -18,12 +18,12 @@ import { describe, expect, it } from 'vitest';
 import { compose } from '../../src/core/compose.ts';
 import {
   definePolicy,
+  orderPolicies,
   POLICY_ORDER,
   POLICY_SCOPE,
   type Policy,
   type PolicyKind,
   type PolicyScope,
-  orderPolicies,
   policyRank,
   policyStack,
 } from '../../src/core/policy.ts';
@@ -59,7 +59,7 @@ function probe<Ctx>(
   kind: PolicyKind,
   scope: PolicyScope,
   log: string[],
-  tag = kind,
+  tag: string = kind,
 ): Policy<Ctx, unknown> {
   return definePolicy<Ctx, unknown>({
     kind,
@@ -121,9 +121,10 @@ describe('orderPolicies', () => {
       .reverse()
       .map((kind) => probe<AttemptContext>(kind, POLICY_SCOPE[kind], log));
 
-    expect(reversed.map((p) => p.kind), 'precondition: the input is reversed').toEqual(
-      [...CANONICAL].reverse(),
-    );
+    expect(
+      reversed.map((p) => p.kind),
+      'precondition: the input is reversed',
+    ).toEqual([...CANONICAL].reverse());
     expect(orderPolicies(reversed).map((p) => p.kind)).toEqual([...CANONICAL]);
   });
 
@@ -276,9 +277,10 @@ describe('policyStack + compose — the nesting that results', () => {
     });
 
     expect(log.filter((entry) => entry === '=provider')).toHaveLength(3);
-    expect(log.filter((entry) => entry === '>rate-limit'), 'a token per PHYSICAL try').toHaveLength(
-      3,
-    );
+    expect(
+      log.filter((entry) => entry === '>rate-limit'),
+      'a token per PHYSICAL try',
+    ).toHaveLength(3);
     expect(
       log.filter((entry) => entry === '>circuit-breaker'),
       'a breaker record per PHYSICAL try',

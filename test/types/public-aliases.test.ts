@@ -27,8 +27,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   type BreakerState,
-  capability,
   type CapabilityName,
+  capability,
   createLayer,
   defineContract,
   defineProvider,
@@ -94,9 +94,7 @@ type R01_ErrorCodeIsALiteralUnion = Expect<
     | 'ALL_FAILED'
   >
 >;
-type R02_BreakerStateIsALiteralUnion = Expect<
-  Equal<BreakerState, 'closed' | 'open' | 'half-open'>
->;
+type R02_BreakerStateIsALiteralUnion = Expect<Equal<BreakerState, 'closed' | 'open' | 'half-open'>>;
 type R03_EventNameIsAliased = Expect<Equal<InterlayerEventName, keyof InterlayerEventsShape>>;
 type R04_CapabilityNameIsALiteralUnion = Expect<Equal<CapabilityName<Ai>, 'chat' | 'embed'>>;
 type R05_PerCapabilityKeysAreTheContract = Expect<
@@ -255,6 +253,76 @@ function middlewareNegatives(): unknown[] {
   return out;
 }
 
+/* ================================================================== *
+ * 6. FINDING — where the alias rule is NOT honoured
+ * ================================================================== */
+
+/**
+ * ── FINDING 4 (recorded, not fixed) ──────────────────────────────────────
+ *
+ * `InterlayerEventName` and `ErrorCode` print as NAMES; captured verbatim from
+ * a strip-and-verify run:
+ *
+ *   Argument of type '"exploded"' is not assignable to parameter of type
+ *   'InterlayerEventName'.
+ *   Argument of type '"NOT_A_CODE"' is not assignable to parameter of type
+ *   'ErrorCode'.
+ *
+ * The CONTRACT type parameter does not. Because `defineContract({…})` infers an
+ * anonymous object type, every message that mentions `C` dumps the whole
+ * contract structurally, and it gets worse the bigger the contract is:
+ *
+ *   Object literal may only specify known properties, and 'retries' does not
+ *   exist in type 'LayerConfig<{ chat: Capability<ChatIn, ChatOut>; embed:
+ *   Capability<EmbedIn, EmbedOut>; }, readonly [Provider<{ chat:
+ *   Capability<ChatIn, ChatOut>; embed: Capability<...>; }, "openai",
+ *   { ...; }>]>'.
+ *
+ * This is NOT the mistake R6 warned about — no public signature exposes a bare
+ * `keyof SomeGeneric<…>` — but it produces the same symptom. The user-side fix
+ * is to give the contract a name, at which point the alias prints instead:
+ *
+ *   Argument of type 'InterfaceContract' is not assignable to parameter of type
+ *   'Readonly<Record<string, Capability<unknown, unknown>>>'.
+ *
+ * The contrast below is kept compiling so any future strip-and-verify run
+ * reproduces both messages side by side.
+ */
+const inlineContract = defineContract({ chat: capability<ChatIn, ChatOut>() });
+
+interface NamedContract {
+  readonly chat: ReturnType<typeof capability<ChatIn, ChatOut>>;
+}
+const namedContract: NamedContract = { chat: capability<ChatIn, ChatOut>() };
+
+function readabilityContrast(): unknown[] {
+  const out: unknown[] = [];
+
+  // R-N12 — inline-inferred contract: the message dumps `C` STRUCTURALLY.
+  out.push(
+    defineProvider(inlineContract, {
+      id: 'inline',
+      capabilities: {
+        // @ts-expect-error TS2322: 'object' is not assignable to 'ChatOut'
+        chat: async (): Promise<object> => ({}),
+      },
+    }),
+  );
+
+  // R-N13 — the identical mistake against a NAMED contract, for comparison.
+  out.push(
+    defineProvider(namedContract, {
+      id: 'named',
+      capabilities: {
+        // @ts-expect-error TS2322: 'object' is not assignable to 'ChatOut'
+        chat: async (): Promise<object> => ({}),
+      },
+    }),
+  );
+
+  return out;
+}
+
 /* ---------- consume every assertion ---------- */
 
 const typeAssertions: [
@@ -283,6 +351,9 @@ describe('public aliases and the error text they produce', () => {
     expect(typeof inferNegatives).toBe('function');
     expect(typeof middlewareNegatives).toBe('function');
     expect(typeof narrowByCode).toBe('function');
+    expect(typeof readabilityContrast).toBe('function');
+    expect(Object.keys(inlineContract)).toEqual(['chat']);
+    expect(Object.keys(namedContract)).toEqual(['chat']);
   });
 
   it('names the validator shapes readably, which is the runtime half of the rule', () => {
@@ -297,15 +368,17 @@ describe('public aliases and the error text they produce', () => {
     expect(parsed).toEqual({ prompt: 'hi', retries: 2 });
   });
 
-  it('narrows a real error by code', async () => {
-    const boom = await layer
-      .call('embed', { texts: ['a'] })
-      .then(() => undefined)
-      .catch((error: unknown) => error);
-    // `embed` is declared but unimplemented here, so this is the guard's
-    // happy path: one code in, one narrowed class out.
-    expect(hasCode(boom, 'UNSUPPORTED_CAPABILITY')).toBe(true);
-    expect(hasCode(boom, 'TIMEOUT')).toBe(false);
+  it('narrows a real error by code', () => {
+    const timeout: unknown = new TimeoutError(50, 'call');
+    expect(hasCode(timeout, 'TIMEOUT')).toBe(true);
+    expect(hasCode(timeout, 'ALL_FAILED')).toBe(false);
+    expect(narrowByCode(timeout)?.timeoutMs).toBe(50);
+    expect(narrowByCode(new Error('plain'))).toBeUndefined();
+  });
+
+  it('runs a real call through the layer these aliases describe', async () => {
+    const reply = await layer.call('chat', { prompt: 'hi' });
+    expect(reply.text).toBe('openai:hi');
     await layer.close();
   });
 });

@@ -36,7 +36,9 @@ describe('AttemptTimeout inside Retry (ORD-1)', () => {
     const hung = scripted({ id: 'hung', hang: true });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 3, strategy: 'fixed', baseDelayMs: 10 },
         timeout: { attemptTimeoutMs: 50, totalTimeoutMs: 10_000 },
@@ -76,7 +78,9 @@ describe('AttemptTimeout inside Retry (ORD-1)', () => {
     const hung = scripted({ id: 'hung', hang: true });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 3, strategy: 'fixed', baseDelayMs: 10 },
         // A total budget far larger than the loop can spend.
@@ -134,7 +138,9 @@ describe('the retry backoff sleep', () => {
     const dead = scripted({ id: 'dead', failures: Number.POSITIVE_INFINITY });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } }),
+      ],
       resilience: {
         // An explicit `budgetMs` disables retry's own cooperative
         // "do not sleep into a deadline I cannot meet" check, so the total
@@ -243,7 +249,9 @@ describe('TotalTimeout outermost (ORD-2)', () => {
     const hung = scripted({ id: 'hung', hang: true });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } }),
+      ],
       // Inverted on purpose: attempt >> total. `composeDeadline` clamps rather
       // than throwing, and the CALL-scope error is what surfaces.
       resilience: {
@@ -308,7 +316,9 @@ describe('cancellation through the whole stack (ORD-3)', () => {
     const controller = new AbortController();
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 3, strategy: 'fixed', baseDelayMs: 100 },
         timeout: { attemptTimeoutMs: 1_000, totalTimeoutMs: 10_000 },

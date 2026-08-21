@@ -56,7 +56,9 @@ describe('AttemptTimeout inside RateLimit (ORD-7)', () => {
     const provider = scripted({ id: 'p', delayMs: 100 });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } }),
+      ],
       resilience: {
         retry: false,
         breaker: false,
@@ -179,7 +181,9 @@ describe('RateLimit inside TotalTimeout (ORD-8, ORD-9)', () => {
     const provider = scripted({ id: 'p', delayMs: 100 });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } }),
+      ],
       resilience: {
         retry: false,
         breaker: false,
@@ -195,7 +199,10 @@ describe('RateLimit inside TotalTimeout (ORD-8, ORD-9)', () => {
     await settle(runtime, layer.call('echo', { n: 1 }));
     const error = await rejectionOf(runtime, layer.call('echo', { n: 2 }));
 
-    expect(throttled.map((t) => t.waitMs), 'priced at ceil((1 - 0.1) / 1 * 1000)').toEqual([900]);
+    expect(
+      throttled.map((t) => t.waitMs),
+      'priced at ceil((1 - 0.1) / 1 * 1000)',
+    ).toEqual([900]);
     expect(error.code).toBe('TIMEOUT');
     if (hasCode(error, 'TIMEOUT')) expect(error.scope).toBe('call');
     expect(runtime.now()).toBe(500);

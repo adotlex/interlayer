@@ -25,7 +25,7 @@ interface Manifest {
   readonly types?: string;
   readonly files?: readonly string[];
   readonly sideEffects?: boolean;
-  readonly engines?: Readonly<Record<string, string>>;
+  readonly engines?: { readonly node?: string };
   readonly exports?: Readonly<Record<string, unknown>>;
   readonly dependencies?: Readonly<Record<string, string>>;
   readonly peerDependencies?: Readonly<Record<string, string>>;
@@ -165,7 +165,7 @@ function atLeast(floor: readonly [number, number, number], want: readonly number
 }
 
 describe('engines.node', () => {
-  const declared = pkg.engines?.['node'] ?? '';
+  const declared = pkg.engines?.node ?? '';
 
   it('is declared as a simple lower bound', () => {
     expect(declared).toBe('>=22.12.0');
@@ -204,7 +204,7 @@ interface Probe {
   readonly error?: string;
 }
 
-let probes: Readonly<Record<string, Probe>> = {};
+let probes = new Map<string, Probe>();
 
 const SPECIFIERS: readonly string[] = [
   'interlayer',
@@ -230,18 +230,18 @@ beforeAll(() => {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   });
-  probes = JSON.parse(stdout) as Record<string, Probe>;
+  probes = new Map(Object.entries(JSON.parse(stdout) as Record<string, Probe>));
 });
 
 describe('exports map, resolved by plain node', () => {
   it.runIf(distBuilt)('the documented entry resolves to the built barrel', () => {
-    expect(probes['interlayer']?.resolved).toBe(
+    expect(probes.get('interlayer')?.resolved).toBe(
       new URL('dist/index.js', `file://${REPO_ROOT}/`).href,
     );
   });
 
   it('`./package.json` resolves — several tools read it', () => {
-    expect(probes['interlayer/package.json']?.resolved).toBe(
+    expect(probes.get('interlayer/package.json')?.resolved).toBe(
       new URL('package.json', `file://${REPO_ROOT}/`).href,
     );
   });
@@ -256,6 +256,6 @@ describe('exports map, resolved by plain node', () => {
     // With no wildcard subpath, `exports` is a closed set. Anything reaching
     // past it must fail at RESOLUTION, before a consumer can build a habit out
     // of it, or every file under `dist/` becomes API by accident.
-    expect(probes[specifier]).toEqual({ error: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
+    expect(probes.get(specifier)).toEqual({ error: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
   });
 });

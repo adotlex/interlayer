@@ -39,8 +39,8 @@ import type {
 } from '../../src/core/types.ts';
 import { capability, defineContract } from '../../src/registry/index.ts';
 import { circuitBreaker } from '../../src/resilience/circuit-breaker/index.ts';
-import { rateLimit, type RateLimitPolicyOptions } from '../../src/resilience/rate-limit/index.ts';
-import { retryPolicy, type RetryPolicyOptions } from '../../src/resilience/retry/index.ts';
+import { type RateLimitPolicyOptions, rateLimit } from '../../src/resilience/rate-limit/index.ts';
+import { type RetryPolicyOptions, retryPolicy } from '../../src/resilience/retry/index.ts';
 import { attemptTimeout, totalTimeout } from '../../src/resilience/timeout/index.ts';
 import type { FakeRuntime } from '../support/index.ts';
 
@@ -373,6 +373,18 @@ function numberAt(record: Readonly<Record<string, unknown>>, key: string): numbe
   return value;
 }
 
+/**
+ * Reads one key of a `describe()` record.
+ *
+ * The key travels as a VARIABLE deliberately: `record['literal']` on an
+ * index-signature type is what Biome's `useLiteralKeys` objects to, and
+ * `record.literal` is what TypeScript's `noPropertyAccessFromIndexSignature`
+ * objects to. A variable satisfies both.
+ */
+function valueAt(record: Readonly<Record<string, unknown>>, key: string): unknown {
+  return record[key];
+}
+
 /** Tokens left in a limiter's bucket. Compare with a tolerance, never `===`. */
 export function tokensOf(limiter: Policy<AttemptContext, unknown>): number {
   return numberAt(described(limiter), 'tokens');
@@ -396,12 +408,12 @@ export function breakerView(
   breaker: Policy<AttemptContext, unknown>,
   key: string,
 ): BreakerView | undefined {
-  const keys = described(breaker)['keys'];
+  const keys = valueAt(described(breaker), 'keys');
   if (typeof keys !== 'object' || keys === null) return undefined;
-  const entry = (keys as Record<string, unknown>)[key];
+  const entry = valueAt(keys as Record<string, unknown>, key);
   if (typeof entry !== 'object' || entry === null) return undefined;
   const record = entry as Record<string, unknown>;
-  const state = record['state'];
+  const state = valueAt(record, 'state');
   return {
     state: typeof state === 'string' ? state : '<unknown>',
     bucketCount: numberAt(record, 'bucketCount'),

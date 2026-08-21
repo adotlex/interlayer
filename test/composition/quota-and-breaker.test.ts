@@ -99,7 +99,9 @@ describe('RateLimit inside Retry (ORD-4)', () => {
     const dead = scripted({ id: 'dead', failures: Number.POSITIVE_INFINITY });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 3, strategy: 'fixed', baseDelayMs: 10 },
         // Two tokens, refilling at one per second: the third physical try must
@@ -116,7 +118,9 @@ describe('RateLimit inside Retry (ORD-4)', () => {
 
     const error = await rejectionOf(runtime, layer.call('echo', { n: 1 }));
 
-    expect(dead.at, 'try 1 free, try 2 free, try 3 waits ~1 s for a refill').toEqual([0, 10, 1_000]);
+    expect(dead.at, 'try 1 free, try 2 free, try 3 waits ~1 s for a refill').toEqual([
+      0, 10, 1_000,
+    ]);
     expect(throttled).toHaveLength(1);
     expect(throttled[0]?.key, 'one limiter per provider, keyed by provider id').toBe('dead');
     expect(throttled[0]?.waitMs, 'ceil((1 - 0.02) / 1 * 1000)').toBe(980);
@@ -187,7 +191,9 @@ describe('CircuitBreaker inside Retry (ORD-5)', () => {
     const dead = scripted({ id: 'dead', failures: Number.POSITIVE_INFINITY });
     const retrying = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 3, strategy: 'fixed', baseDelayMs: 1 },
         breaker: { mode: 'consecutive', consecutiveFailureThreshold: 3, resetMs: 60_000 },
@@ -202,9 +208,10 @@ describe('CircuitBreaker inside Retry (ORD-5)', () => {
     await rejectionOf(withRetry, retrying.call('echo', { n: 1 }));
 
     expect(dead.callCount).toBe(3);
-    expect(trips.map((t) => [t.from, t.to]), 'tripped inside a single logical call').toEqual([
-      ['closed', 'open'],
-    ]);
+    expect(
+      trips.map((t) => [t.from, t.to]),
+      'tripped inside a single logical call',
+    ).toEqual([['closed', 'open']]);
     expect(trips[0]?.failures).toBe(3);
     await retrying.close();
 
@@ -248,7 +255,9 @@ describe('a breaker opening inside the retry loop (ORD-6)', () => {
     const dead = scripted({ id: 'dead', failures: Number.POSITIVE_INFINITY });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 5, strategy: 'fixed', baseDelayMs: 10 },
         breaker: { mode: 'consecutive', consecutiveFailureThreshold: 2, resetMs: 60_000 },

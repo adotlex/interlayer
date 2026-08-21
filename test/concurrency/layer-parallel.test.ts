@@ -22,7 +22,7 @@ import type { CallContext, InterlayerEventName, InterlayerEvents } from '../../s
 import { createLayer } from '../../src/layer.ts';
 import { capability, defineContract, defineProvider } from '../../src/registry/index.ts';
 import { createFakeRuntime } from '../support/index.ts';
-import { createLedger, drive, flush } from './harness.ts';
+import { createGate, createLedger, drive, flush } from './harness.ts';
 
 interface ChatRequest {
   readonly prompt: string;
@@ -431,5 +431,50 @@ describe('parallel calls on one layer — events and per-call context', () => {
     expect(observed.at(-1)?.size).toBe(1);
     expect(observed.at(-1)?.mine).toBe('late');
     await layer.close();
+  });
+
+  it('closing the layer while a burst is parked does not strand or corrupt those calls', async () => {
+    const runtime = createFakeRuntime();
+    const ledger = createLedger(runtime);
+    const gate = createGate(runtime);
+
+    const layer = createLayer({
+      contract: ai,
+      providers: [
+        defineProvider(ai, {
+          id: 'p',
+          capabilities: {
+            chat: async (input: ChatRequest): Promise<ChatReply> => {
+              await gate.park(input.prompt);
+              return { text: input.prompt, by: 'p' };
+            },
+          },
+        }),
+      ],
+      resilience: { retry: false, rateLimit: false, timeout: false, breaker: {} },
+      runtime,
+    });
+
+    const ids = ['k1', 'k2', 'k3'];
+    for (const id of ids) void ledger.watch(id, layer.callWithMeta('chat', { prompt: id }));
+    await flush();
+    expect(gate.arrivals).toEqual(ids);
+
+    // Teardown races three settlements: `close()` clears the breaker's state
+    // map and disposes every policy while all three calls are still holding
+    // generations captured from it.
+    await layer.close();
+    await layer.close(); // idempotent, and not a second teardown mid-flight
+    for (const id of ids) gate.release(id);
+    await drive(runtime, () => ledger.size === ids.length);
+
+    expect(ledger.resolved, 'a parked call is not abandoned by close()').toEqual(ids);
+    for (const id of ids) {
+      const meta = metaOf(ledger.get(id)?.value);
+      expect(meta.value.text).toBe(id);
+      expect(meta.attempts).toBe(1);
+      expect(meta.errors).toEqual([]);
+    }
+    expect(runtime.pendingTimers).toBe(0);
   });
 });

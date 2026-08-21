@@ -59,7 +59,7 @@ const TSC = path.join(REPO_ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
 const canCompile = existsSync(TSC);
 
 interface Manifest {
-  readonly scripts?: Readonly<Record<string, string>>;
+  readonly scripts?: { readonly clean?: string; readonly build?: string };
 }
 interface BuildConfig {
   readonly compilerOptions?: {
@@ -74,7 +74,7 @@ const buildConfig = JSON.parse(
   readFileSync(path.join(REPO_ROOT, 'tsconfig.build.json'), 'utf8'),
 ) as BuildConfig;
 
-const cleanScript = pkg.scripts?.['clean'] ?? '';
+const cleanScript = pkg.scripts?.clean ?? '';
 const buildInfo = buildConfig.compilerOptions?.tsBuildInfoFile ?? '';
 
 /* ------------------------------------------------------------------ *

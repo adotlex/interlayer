@@ -32,8 +32,8 @@
 
 import { afterAll, describe, expect, it } from 'vitest';
 import {
-  capability,
   type CapabilityName,
+  capability,
   createLayer,
   defineContract,
   defineProvider,
@@ -305,7 +305,24 @@ const typeAssertions: [
   A14_SecondCapabilityDiffers,
   A15_OnlyKeepsCallInference,
   A16_OptionsDoNotDisturbInference,
-] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+] = [
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+  true,
+];
 
 /* ---------- runtime: the types are not the only thing that has to work ---------- */
 

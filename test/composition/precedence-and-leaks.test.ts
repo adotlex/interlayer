@@ -83,7 +83,9 @@ describe('every layer enabled, provider succeeds immediately (ORD-10)', () => {
     const provider = scripted({ id: 'p' });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } }),
+      ],
       // All four policies at their defaults — nothing switched off.
       runtime,
     });
@@ -113,7 +115,9 @@ describe('error precedence (ORD-11)', () => {
     const caller = new AbortController();
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } }),
+      ],
       resilience: {
         retry: false,
         breaker: false,
@@ -146,7 +150,9 @@ describe('error precedence (ORD-11)', () => {
     const hung = scripted({ id: 'hung', hang: true });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } }),
+      ],
       resilience: {
         retry: false,
         breaker: false,
@@ -171,7 +177,9 @@ describe('error precedence (ORD-11)', () => {
     const hung = scripted({ id: 'hung', hang: true });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } }),
+      ],
       resilience: {
         retry: false,
         rateLimit: false,
@@ -199,7 +207,9 @@ describe('error precedence (ORD-11)', () => {
     const dead = scripted({ id: 'dead', failures: Number.POSITIVE_INFINITY });
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'dead', capabilities: { echo: dead.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 3, strategy: 'fixed', baseDelayMs: 1 },
         rateLimit: false,
@@ -335,7 +345,9 @@ describe('leak guard after every terminal state (ORD-12)', () => {
     const probe = probedSignal();
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } }),
+      ],
       runtime,
     });
 
@@ -353,7 +365,9 @@ describe('leak guard after every terminal state (ORD-12)', () => {
     const probe = probedSignal();
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 4, strategy: 'fixed', baseDelayMs: 5 },
         timeout: { attemptTimeoutMs: 20, totalTimeoutMs: 60_000 },
@@ -379,7 +393,9 @@ describe('leak guard after every terminal state (ORD-12)', () => {
     const probe = probedSignal();
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'hung', capabilities: { echo: hung.handler } }),
+      ],
       resilience: {
         retry: { maxAttempts: 4, strategy: 'fixed', baseDelayMs: 5 },
         timeout: { attemptTimeoutMs: 20, totalTimeoutMs: 70 },
@@ -404,7 +420,9 @@ describe('leak guard after every terminal state (ORD-12)', () => {
     const probe = probedSignal();
     const layer = createLayer({
       contract: echoContract,
-      providers: [defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } })],
+      providers: [
+        defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } }),
+      ],
       resilience: {
         retry: false,
         breaker: false,
