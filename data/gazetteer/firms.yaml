@@ -831,9 +831,13 @@ normalization:
     - holdings
     - holding
     - group          # STRIP LAST ONLY - see docs; "Jane Street Group" -> "jane street"
-    - trust
-    - partners       # careful: "Millennium Partners" is meaningful; suffix-strip is
-                     # applied to the QUERY and the ALIAS symmetrically so it is safe
+  # DELIBERATELY ABSENT: "trust" and "partners".
+  # Stripping them makes an unrelated firm an EXACT index hit, and exact hits skip
+  # the containment guard entirely: "Citadel Trust" -> "citadel" and "Jane Street
+  # Partners" -> "jane street" were both accepted at 100.0 as the target firms.
+  # Symmetric stripping of query and alias does not help here -- the query is a
+  # different company, not a variant spelling of the same one. Real aliases that
+  # need these words ("Millennium Partners") are indexed under their full form.
   suffix_strip_mode: repeated_trailing   # strip repeatedly from the END only
   noise_tokens:                          # dropped anywhere in the string
     - the

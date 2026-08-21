@@ -62,7 +62,18 @@ _SLUG_RE = re.compile(r"/(?:in|pub)/[\w%-]+", re.IGNORECASE)
 #: Keys whose values are slugs this module generated, not text from the export.
 #: Scanning them for names produces only false positives.
 _AUDIT_SKIP_KEYS = frozenset(
-    {"anchor", "band", "cluster_id", "firm", "id", "kind", "provenance", "slug", "target_firm"}
+    {
+        "anchor",
+        "band",
+        "cluster_id",
+        "firm",
+        "id",
+        "kind",
+        "provenance",
+        "slug",
+        "stale_kind",
+        "target_firm",
+    }
 )
 
 #: Shortest token the name scrubber will act on. Two characters is aggressive
@@ -105,7 +116,8 @@ REDACTED_ALLOWLIST: dict[str, frozenset[str]] = {
             "rank",
             "score",
             "speculative",
-            "stale_note",
+            "stale_kind",
+            "stale_year",
             "components",
         }
     ),
@@ -123,7 +135,6 @@ REDACTED_ALLOWLIST: dict[str, frozenset[str]] = {
     "cluster": frozenset(
         {
             "anchor",
-            "confidence",
             "band",
             "id",
             "label",

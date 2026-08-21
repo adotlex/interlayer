@@ -119,11 +119,9 @@ _CLEANCO_TERMS: tuple[str, ...] = (
     "limited partnership",
     "general partnership",
     "sole proprietorship",
-    "trust",
     "holdings",
     "holding",
     "group",
-    "partners",
     # germanic
     "gmbh",
     "ggmbh",
@@ -285,9 +283,17 @@ _CLEANCO_TERMS: tuple[str, ...] = (
 
 # Terms the gazetteer adds on top of cleanco's legal forms. They are not legal
 # forms at all -- they are structural nouns that appear at the end of firm names
-# ("Jane Street Group") -- but they are stripped from the QUERY and the ALIAS
-# symmetrically, so removing them cannot cause a cross-firm merge on its own.
-_GAZETTEER_EXTRA_TERMS: tuple[str, ...] = ("holdings", "holding", "group", "trust", "partners")
+# ("Jane Street Group").
+#
+# "trust" and "partners" were here and were REMOVED. Symmetric stripping of query
+# and alias is not the safety property it looks like: it protects variant
+# spellings of the SAME firm, but says nothing about a DIFFERENT firm whose name
+# happens to end in one of these words. Stripping them made "Citadel Trust" fold
+# to "citadel" and "Jane Street Partners" to "jane street" -- exact index hits,
+# and exact hits bypass the containment guard, so both were accepted at 100.0 as
+# the target firms. Aliases that genuinely need the word ("Millennium Partners")
+# are indexed under their full form and still resolve.
+_GAZETTEER_EXTRA_TERMS: tuple[str, ...] = ("holdings", "holding", "group")
 
 LEGAL_SUFFIXES, MULTI_TOKEN_SUFFIXES = _fold_terms(_CLEANCO_TERMS + _GAZETTEER_EXTRA_TERMS)
 

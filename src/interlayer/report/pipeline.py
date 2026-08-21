@@ -44,7 +44,7 @@ from interlayer.models import (
 from interlayer.report import text
 from interlayer.report.layout import build_layout
 from interlayer.report.redact import Redactor
-from interlayer.report.view import FIRM_LABELS, build_context
+from interlayer.report.view import FIRM_LABELS, GENERIC_ORG_LABELS, build_context
 
 __all__ = ["assert_self_contained", "run"]
 
@@ -164,7 +164,11 @@ def run(cfg: Settings) -> None:
     redactor = Redactor(
         cfg,
         people,
-        safe_phrases=sorted({o.name for o in orgs if o.is_target} | set(FIRM_LABELS.values())),
+        safe_phrases=sorted(
+            {o.name for o in orgs if o.is_target}
+            | set(FIRM_LABELS.values())
+            | set(GENERIC_ORG_LABELS.values())
+        ),
     )
 
     inputs_sha = _inputs_digest(

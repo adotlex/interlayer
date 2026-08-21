@@ -19,7 +19,6 @@ from typing import Any
 from interlayer.config import Settings
 from interlayer.models import (
     Cluster,
-    EvidenceItem,
     GraphEdge,
     Org,
     Person,
@@ -58,6 +57,14 @@ FIRM_LABELS: dict[TargetFirm, str] = {
 #: P-17: a redacted cluster smaller than this re-identifies its members.
 MIN_REDACTED_CLUSTER = 3
 
+#: Stand-ins for an org that is not a curated target. Registered as safe phrases
+#: so the audit does not mistake one of these words for somebody's surname.
+GENERIC_ORG_LABELS: dict[str, str] = {
+    "school": "a shared school",
+    "company": "a shared employer",
+    "unknown": "an organisation",
+}
+
 
 def _primary_position(person: Person) -> Position | None:
     """The position a staleness note should be about: current, else most recent."""
@@ -68,25 +75,26 @@ def _primary_position(person: Person) -> Position | None:
     return max(pool, key=lambda p: ((p.start.sort_key if p.start else 0), p.company_raw))
 
 
-def _stale_note(person: Person, red: Redactor) -> str:
-    """§3.8 item 4, expressed as a date rather than an age.
+def _stale(person: Person, red: Redactor) -> tuple[str, str | None]:
+    """§3.8 item 4 as ``(kind, year)``, not as a sentence.
 
-    The spec asks for "employer data is 2y 4m old", which needs a clock; a clock
-    in the document body would make two runs of the same input differ byte for
-    byte. The underlying date says the same thing and is reproducible.
+    Two reasons the prose lives in the template instead of here. The spec asks
+    for "employer data is 2y 4m old", which needs a clock, and a clock in the
+    document body would make two runs of the same input differ byte for byte —
+    the underlying date says the same thing and is reproducible. And the
+    redaction audit scans every string in the payload for known names: prose
+    composed here would collide with ordinary English the moment an operator is
+    connected to somebody called May or Will, and block the report for no
+    reason. The payload therefore carries a slug and a year; the sentence is
+    fixed copy in the template.
     """
     position = _primary_position(person)
     if position is None:
-        return "no employer field in your export"
+        return "none", None
     if position.is_current and position.start is not None:
-        return (
-            f"employer field still says “current”, since {red.year(position.start)} — "
-            "LinkedIn profiles lag reality by months or years"
-        )
+        return "current", red.year(position.start)
     when = red.year(position.end) or red.year(position.start)
-    if when:
-        return f"employer field dated {when} — may be out of date"
-    return "employer field is undated — may be out of date"
+    return ("dated", when) if when else ("undated", None)
 
 
 def _org_label(org: Org | None, red: Redactor) -> str | None:
@@ -99,29 +107,8 @@ def _org_label(org: Org | None, red: Redactor) -> str | None:
     if org is None:
         return None
     if red.enabled and not org.is_target:
-        return {"school": "a shared school", "company": "a shared employer"}.get(
-            str(org.kind), "an organisation"
-        )
+        return GENERIC_ORG_LABELS.get(str(org.kind), GENERIC_ORG_LABELS["unknown"])
     return red.scrub(org.name) or None
-
-
-def _synth_detail(item: EvidenceItem, org_label: str | None, via_label: str | None) -> str:
-    """Rebuild an evidence line from structured fields only.
-
-    ``EvidenceItem.detail`` is unbounded prose written by the scoring stage and
-    is *expected* to contain names — "mutual connection with Jane Doe" — some of
-    which belong to target-firm employees who never appear in ``people.jsonl``
-    and therefore cannot be scrubbed by name. In redacted mode it is dropped
-    outright and this replaces it.
-    """
-    parts: list[str] = []
-    if org_label:
-        parts.append(org_label)
-    if via_label:
-        parts.append(f"via {via_label}")
-    if item.hops is not None:
-        parts.append(f"{item.hops} hop{'s' if item.hops != 1 else ''} away")
-    return " · ".join(parts)
 
 
 def _evidence_rows(
@@ -139,9 +126,12 @@ def _evidence_rows(
             if item.via_person_id
             else None
         )
-        detail = (
-            _synth_detail(item, org_label, via_label) if red.enabled else red.scrub(item.detail)
-        )
+        # In redacted mode the stage's own prose is dropped outright rather than
+        # scrubbed: it is expected to name people ("mutual connection with Jane
+        # Doe"), including target-firm employees who never appear in
+        # people.jsonl and so cannot be matched by name. The template rebuilds
+        # the line from org_label / via_label / hops instead.
+        detail = "" if red.enabled else red.scrub(item.detail)
         rows.append(
             red.emit(
                 "evidence",
@@ -195,13 +185,16 @@ def _person_rows(
                 "cluster": round(person.components.cluster, 4),
                 "title": round(person.components.title, 4),
             },
-            "cluster_id": person.cluster_id or "",
+            "cluster_id": person.cluster_id if person.cluster_id in cluster_labels else "",
             "cluster_label": cluster_labels.get(person.cluster_id or "", ""),
-            "cluster_anchor": f"c-{person.cluster_id}" if person.cluster_id else "",
+            "cluster_anchor": (
+                f"c-{person.cluster_id}" if person.cluster_id in cluster_labels else ""
+            ),
             "hops": person.hops_to_target,
             "n_evidence": len(person.evidence),
             "evidence": _evidence_rows(person, red, orgs, names),
-            "stale_note": _stale_note(record, red) if record else "not in your export",
+            "stale_kind": _stale(record, red)[0] if record else "none",
+            "stale_year": _stale(record, red)[1] if record else None,
             # Free text, deliberately outside the redacted allowlist.
             "employer": red.scrub(record.current_company) if record else "",
             "headline": red.scrub(record.headline) if record else "",
@@ -215,6 +208,12 @@ def _person_rows(
     return rows
 
 
+def _cluster_size(scored: ScoredCluster, clusters: Mapping[str, Cluster]) -> int:
+    """Member count, preferring the scorer's own figure over the cluster record."""
+    cluster = clusters.get(scored.cluster_id)
+    return scored.size or (cluster.size if cluster else 0)
+
+
 def _cluster_label(
     cluster: Cluster | None,
     scored: ScoredCluster,
@@ -223,15 +222,13 @@ def _cluster_label(
 ) -> str:
     """Hedged cluster label (§3.8 item 5), rebuilt from structure when redacting."""
     if not red.enabled:
-        return red.scrub(scored.label or (cluster.label if cluster else "")) or "Unlabelled cluster"
-    targets = [
+        return red.scrub(scored.label or (cluster.label if cluster else ""))
+    targets = {
         orgs[org_id].name
         for org_id, _count in (cluster.top_orgs if cluster else ())
         if org_id in orgs and orgs[org_id].is_target
-    ]
-    if targets:
-        return red.scrub("Possible " + " / ".join(sorted(set(targets))) + " cluster")
-    return "Unlabelled cluster"
+    }
+    return red.scrub(" / ".join(sorted(targets)))
 
 
 def _cluster_rows(
@@ -247,7 +244,7 @@ def _cluster_rows(
     suppressed = 0
     for scored in scored_clusters:
         cluster = clusters.get(scored.cluster_id)
-        size = scored.size or (cluster.size if cluster else 0)
+        size = _cluster_size(scored, clusters)
         if red.enabled and size < MIN_REDACTED_CLUSTER:
             suppressed += 1
             continue
@@ -277,12 +274,10 @@ def _cluster_rows(
             )
             if label
         ]
-        rationale = (
-            f"{size} people · target density {scored.target_density:.2f} · "
-            f"mean confidence {mean_conf:.2f}"
-            if red.enabled
-            else red.scrub(scored.rationale)
-        )
+        # Same reasoning as evidence detail: agent-authored prose is dropped,
+        # not scrubbed. The card composes an equivalent line from size,
+        # target_density and mean_confidence, all of which are numbers.
+        rationale = "" if red.enabled else red.scrub(scored.rationale)
         rows.append(
             red.emit(
                 "cluster",
@@ -336,9 +331,13 @@ def build_context(
         key=lambda p: (-person_confidence[p.person_id], -p.score, p.person_id),
     )
 
-    labels_for_clusters = {
+    # P-17 applies to every surface, not just the cluster cards: a cluster the
+    # report refuses to show must not reappear as a label and a dead anchor on
+    # somebody's row.
+    labels_for_clusters: dict[str, str] = {
         sc.cluster_id: _cluster_label(cluster_by_id.get(sc.cluster_id), sc, red, org_by_id)
         for sc in scored_clusters
+        if not (red.enabled and _cluster_size(sc, cluster_by_id) < MIN_REDACTED_CLUSTER)
     }
 
     observed_rows = _person_rows(
@@ -421,7 +420,7 @@ def build_context(
     }
 
     palette_legend = [
-        {"index": index, "label": labels_for_clusters.get(cid, "Unlabelled cluster")}
+        {"index": index, "label": labels_for_clusters.get(cid, "")}
         for cid, index in sorted(cluster_palette.items(), key=lambda kv: (kv[1], kv[0]))
         if index >= 0
     ][:12]

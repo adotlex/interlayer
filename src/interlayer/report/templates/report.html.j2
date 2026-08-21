@@ -42,18 +42,28 @@
       {% if r.get('employer') %}
       <span class="meta">employer field reads <span class="hedge">{{ r.get('employer') }}</span></span>
       {% endif %}
-      <span class="meta stale">{{ r.stale_note }}</span>
+      <span class="meta stale">
+        {%- if r.stale_kind == 'current' -%}
+        employer field still says &ldquo;current&rdquo;, since {{ r.stale_year }} &mdash; LinkedIn profiles lag reality by months or years
+        {%- elif r.stale_kind == 'dated' -%}
+        employer field dated {{ r.stale_year }} &mdash; may be out of date
+        {%- elif r.stale_kind == 'undated' -%}
+        employer field is undated &mdash; may be out of date
+        {%- else -%}
+        no employer field in your export
+        {%- endif -%}
+      </span>
     </td>
     <td><span class="pill p-{{ r.band }}">{{ band_labels[r.band] }} · {{ "%.2f"|format(r.confidence) }}</span></td>
     <td class="num">{{ "%.3f"|format(r.score) }}</td>
     {% for value in r.per_firm %}
-    <td class="num {{ 'zero' if value == 0 else '' }}">{{ "%.2f"|format(value) }}</td>
+    <td class="num{{ ' zero' if value == 0 else '' }}">{{ "%.2f"|format(value) }}</td>
     {% endfor %}
-    <td>{% if r.cluster_label %}<a href="#{{ r.cluster_anchor }}">{{ r.cluster_label }}</a>{% else %}<span class="zero">—</span>{% endif %}</td>
+    <td>{% if r.cluster_label %}<a href="#{{ r.cluster_anchor }}">{{ r.cluster_label }}</a>{% elif r.cluster_anchor %}<a href="#{{ r.cluster_anchor }}" class="zero">unlabelled cluster</a>{% else %}<span class="zero">—</span>{% endif %}</td>
   </tr>
   <tr class="ev {{ 'obs' if r.observed else 'inf' }}">
     <td></td>
-    <td colspan="{{ 6 + firm_columns | length }}">
+    <td colspan="{{ 4 + firm_columns | length }}">
       {% if r.evidence %}
       <details class="why">
         <summary>Why? — {{ r.n_evidence }} evidence item{{ '' if r.n_evidence == 1 else 's' }}{% if r.hops is not none %} · {{ r.hops }} hops to a target{% endif %}</summary>
@@ -63,7 +73,12 @@
             <span class="prov {{ 'prov-obs' if e.observed else 'prov-inf' }}">{{ 'OBSERVED' if e.observed else 'INFERRED' }}</span>
             <span class="ekind">{{ evidence_labels.get(e.kind, e.kind) }}</span>
             <span class="ew">+{{ "%.2f"|format(e.contribution) }}</span>
-            {% if e.detail %}<span class="edetail {{ '' if e.observed else 'hedge' }}">{{ e.detail }}</span>{% endif %}
+            <span class="edetail{{ '' if e.observed else ' hedge' }}">
+              {%- if e.detail %}{{ e.detail }}{% endif -%}
+              {%- if e.org_label %}{% if e.detail %} &middot; {% endif %}{{ e.org_label }}{% endif -%}
+              {%- if e.via_label %} &middot; via {{ e.via_label }}{% endif -%}
+              {%- if e.hops is not none %} &middot; {{ e.hops }} hop{{ '' if e.hops == 1 else 's' }} away{% endif -%}
+            </span>
           </li>
           {% endfor %}
         </ol>
@@ -250,11 +265,11 @@ ol.evid li + li{border-top:1px dotted var(--rule)}
 svg.net{display:block;width:100%;height:auto}
 #z2:checked ~ .netwrap svg.net{width:200%}
 #z3:checked ~ .netwrap svg.net{width:400%}
-.e-inf{stroke:var(--rule-hard);stroke-width:1.1;fill:none;opacity:.55;
-  stroke-dasharray:2.5 3.5;stroke-linecap:round}
-.e-obs{stroke:var(--obs);stroke-width:1.9;fill:none;opacity:.95}
-.nodes circle{stroke:var(--panel);stroke-width:.5}
-.rings circle{fill:none;stroke:var(--obs);stroke-width:1.8}
+.e-inf{stroke:var(--rule-hard);stroke-width:2.2;fill:none;opacity:.55;
+  stroke-dasharray:5 7;stroke-linecap:round}
+.e-obs{stroke:var(--obs);stroke-width:3.8;fill:none;opacity:.95}
+.nodes circle{stroke:var(--panel);stroke-width:1}
+.rings circle{fill:none;stroke:var(--obs);stroke-width:3.2}
 .nodes .c0{fill:var(--c0)} .nodes .c1{fill:var(--c1)} .nodes .c2{fill:var(--c2)}
 .nodes .c3{fill:var(--c3)} .nodes .c4{fill:var(--c4)} .nodes .c5{fill:var(--c5)}
 .nodes .c6{fill:var(--c6)} .nodes .c7{fill:var(--c7)} .nodes .c8{fill:var(--c8)}
@@ -396,7 +411,7 @@ footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
     </div>
     <div class="netwrap">
       {% if node_groups %}
-      <svg class="net" viewBox="0 0 1000 1000" role="img"
+      <svg class="net" viewBox="0 0 2000 2000" role="img"
            aria-label="Force-directed layout of {{ counts.graph_nodes }} people. Dashed lines are inferred links; solid lines are observed bridges.">
         {% if inferred_d %}<path class="e-inf" d="{{ inferred_d }}"/>{% endif %}
         {% if observed_d %}<path class="e-obs" d="{{ observed_d }}"/>{% endif %}
@@ -410,7 +425,7 @@ footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
         {% endfor %}
         </g>
         <g class="rings">
-        {%- for grp in node_groups -%}{%- for n in grp.nodes -%}{% if n.observed %}<circle cx="{{ n.x }}" cy="{{ n.y }}" r="{{ "%.1f"|format(n.r + 2.6) }}"/>{% endif %}{%- endfor -%}{%- endfor -%}
+        {%- for grp in node_groups -%}{%- for n in grp.nodes -%}{% if n.observed %}<circle cx="{{ n.x }}" cy="{{ n.y }}" r="{{ n.r + 5 }}"/>{% endif %}{%- endfor -%}{%- endfor -%}
         </g>
       </svg>
       {% else %}
@@ -421,7 +436,7 @@ footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
     {% if palette_legend %}
     <p class="swatches">
       {% for entry in palette_legend %}
-      <span class="sw sw-{{ entry.index }}"><i></i>{{ entry.label }}</span>
+      <span class="sw sw-{{ entry.index }}"><i></i>{{ entry.label if entry.label else "unlabelled" }}</span>
       {% endfor %}
       <span class="sw"><i style="background:var(--cx)"></i>other / unclustered</span>
     </p>
@@ -486,12 +501,17 @@ footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
   <ul class="cards">
     {% for c in cluster_rows %}
     <li class="card" id="{{ c.anchor }}">
-      <h3>Possible {{ c.label }}</h3>
+      <h3>{% if c.label %}Possible {{ c.label }} cluster{% else %}Unlabelled cluster{% endif %}</h3>
       <p class="rat"><span class="pill p-{{ c.band }}">{{ band_labels[c.band] }} · {{ "%.2f"|format(c.mean_confidence) }} mean</span>
         <span class="rk">{{ c.size }} people</span>
         {% if c.observed_members %}<span class="prov prov-obs">{{ c.observed_members }} OBSERVED</span>
         {% else %}<span class="prov prov-inf">ALL INFERRED</span>{% endif %}</p>
-      <p class="rat"><span class="hedge">{{ c.rationale }}</span></p>
+      <p class="rat"><span class="hedge">
+        {%- if c.rationale %}{{ c.rationale }}{% else -%}
+        {{ c.size }} people &middot; target density {{ "%.2f"|format(c.target_density) }}
+        &middot; mean confidence {{ "%.2f"|format(c.mean_confidence) }}
+        {%- endif -%}
+      </span></p>
       <p class="firmrow">
         {% for label in firm_columns %}
         <span>{{ label }} {{ "%.2f"|format(c.per_firm[loop.index0]) }}</span>
@@ -503,7 +523,7 @@ footer{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--rule);
       </p>
       {% endif %}
       {% if c.members %}
-      <ul>{% for m in c.members %}<li><a class="{{ 'ob' if m.observed else '' }}" href="#{{ m.anchor }}">{{ m.label }}</a></li>{% endfor %}</ul>
+      <ul>{% for m in c.members %}<li><a{{ ' class="ob"' | safe if m.observed else '' }} href="#{{ m.anchor }}">{{ m.label }}</a></li>{% endfor %}</ul>
       {% endif %}
     </li>
     {% endfor %}

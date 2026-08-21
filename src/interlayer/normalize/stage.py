@@ -263,24 +263,36 @@ def _build_orgs(drafts: dict[str, _OrgDraft]) -> tuple[dict[str, str], list[Org]
     Two drafts can land on the same ``org_id`` when their display names differ
     only in punctuation, because ``stable_id`` folds the name it hashes. That is
     a merge, not a collision, so the surviving Org keeps the union of what both
-    knew.
+    knew -- but a gazetteer-derived record wins on ``kind``. Somebody listing
+    "Jane Street" in an education field (the firm runs teaching programmes) must
+    not turn the canonical Jane Street company record into an ``UNKNOWN``.
+    Gazetteer groups are keyed ``gaz:`` and surface forms ``raw:``, so iterating
+    in sorted order puts the canonical record first every time.
     """
     by_id: dict[str, Org] = {}
+    canonical_ids: set[str] = set()
     group_to_id: dict[str, str] = {}
     for group in sorted(drafts):
         draft = drafts[group]
         name = draft.display_name()
         org_id = stable_id("org", name)
         aliases = tuple(sorted(draft.surface_forms))
+        from_gazetteer = draft.canonical_name is not None
         existing = by_id.get(org_id)
         if existing is not None:
             merged_aliases = tuple(sorted(set(existing.aliases) | set(aliases)))
+            if org_id in canonical_ids:
+                kind = existing.kind
+            elif from_gazetteer:
+                kind = draft.kind
+            else:
+                kind = existing.kind if existing.kind is draft.kind else OrgKind.UNKNOWN
             org = existing.model_copy(
                 update={
                     "aliases": merged_aliases,
                     "is_target": existing.is_target or draft.is_target,
                     "target_firm": existing.target_firm or draft.target_firm,
-                    "kind": existing.kind if existing.kind is draft.kind else OrgKind.UNKNOWN,
+                    "kind": kind,
                     "linkedin_url": existing.linkedin_url or draft.linkedin_url,
                     "domain": existing.domain or draft.domain,
                 }
@@ -297,6 +309,8 @@ def _build_orgs(drafts: dict[str, _OrgDraft]) -> tuple[dict[str, str], list[Org]
                 target_firm=draft.target_firm,
             )
         by_id[org_id] = org
+        if from_gazetteer:
+            canonical_ids.add(org_id)
         group_to_id[group] = org_id
     return group_to_id, [by_id[k] for k in sorted(by_id)]
 
@@ -315,14 +329,22 @@ def run(cfg: Settings) -> None:
     reviews: list[ReviewItem] = []
     cache: dict[tuple[str, AffiliationKind], MatchResult] = {}
     verdicts: Counter[str] = Counter()
+    skipped = 0
 
     for person in people:
         resolved = _resolve_person_strings(person, gaz, cfg, cache)
         spans = _spans(person)
         for index, (kind, raw_text, title, result) in enumerate(resolved):
+            folded = norm(raw_text)
+            if not folded:
+                # Punctuation-only placeholders ("-", "N/A" once folded to
+                # nothing) name no employer. Building an Org from one would give
+                # everybody who typed the same placeholder a shared-employer
+                # edge, which is a fabricated relationship.
+                skipped += 1
+                continue
             named = gaz.entities.get(result.entity_key) if result.entity_key else None
             entity = _org_entity(result, gaz)
-            folded = norm(raw_text) or raw_text.strip().casefold()
             group = _group_key(entity, folded)
             _record_org(drafts, group, raw_text.strip(), kind, entity)
             verdicts[str(result.verdict)] += 1
@@ -383,12 +405,14 @@ def run(cfg: Settings) -> None:
     write_jsonl(_review_path(cfg), ordered_reviews)
 
     log.info(
-        "normalize: %d people -> %d orgs (%d target), %d affiliations, %d for review (%s)",
+        "normalize: %d people -> %d orgs (%d target), %d affiliations, %d for review, "
+        "%d unusable strings skipped (%s)",
         len(people),
         len(orgs),
         sum(1 for o in orgs if o.is_target),
         len(affiliations),
         len(reviews),
+        skipped,
         ", ".join(f"{k}={v}" for k, v in sorted(verdicts.items())),
     )
 

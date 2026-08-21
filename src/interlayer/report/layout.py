@@ -32,17 +32,20 @@ from interlayer.models import GraphEdge
 
 __all__ = ["VIEW", "GraphLayout", "LaidOutNode", "build_layout", "is_observed_edge"]
 
-#: SVG user-space extent. Coordinates are emitted at one decimal place, which is
-#: sub-pixel at any sane zoom and roughly halves the byte cost of the graph.
-VIEW = 1000.0
-_PAD = 18.0
+#: SVG user-space extent. Coordinates are emitted as integers in this space
+#: rather than as decimals in a smaller one: 2 000 steps is finer than a pixel
+#: at any zoom the panel offers, and dropping the decimal point saves roughly a
+#: character per coordinate, which at four coordinates per edge is tens of
+#: kilobytes on a large graph.
+VIEW = 2000.0
+_PAD = 36.0
 
 #: Beyond this the picture is mush and the file is large for no benefit; the
 #: lowest-ranked nodes are dropped and the omission is stated on the page.
 MAX_GRAPH_NODES = 4000
 
-_MIN_R = 1.6
-_MAX_R = 9.0
+_MIN_R = 3.0
+_MAX_R = 18.0
 
 
 @dataclass(frozen=True)
@@ -50,9 +53,9 @@ class LaidOutNode:
     """One placed node. ``cluster`` is a palette index, not a cluster id."""
 
     person_id: str
-    x: float
-    y: float
-    r: float
+    x: int
+    y: int
+    r: int
     cluster: int
     rank: int | None
     observed: bool
@@ -159,15 +162,15 @@ def build_layout(
     nodes: list[LaidOutNode] = []
     for i, pid in enumerate(kept):
         degree = degrees.get(pid, 0)
-        radius = min(_MAX_R, _MIN_R + math.sqrt(degree) * 0.8)
+        radius = min(_MAX_R, _MIN_R + math.sqrt(degree) * 1.6)
         if pid in ranks:
-            radius = max(radius, 4.2)
+            radius = max(radius, 9.0)
         nodes.append(
             LaidOutNode(
                 person_id=pid,
-                x=round(xs[i], 1),
-                y=round(ys[i], 1),
-                r=round(radius, 1),
+                x=round(xs[i]),
+                y=round(ys[i]),
+                r=max(2, round(radius)),
                 cluster=cluster_index.get(pid, -1),
                 rank=ranks.get(pid),
                 observed=pid in observed_people,
@@ -177,7 +180,7 @@ def build_layout(
     def _d(items: Sequence[tuple[int, int]]) -> str:
         out: list[str] = []
         for a, b in sorted(items):
-            out.append(f"M{xs[a]:.1f} {ys[a]:.1f}L{xs[b]:.1f} {ys[b]:.1f}")
+            out.append(f"M{round(xs[a])} {round(ys[a])}L{round(xs[b])} {round(ys[b])}")
         return "".join(out)
 
     inferred_pairs = [p for p in pairs if p not in observed_set]
