@@ -1,0 +1,122 @@
+# =============================================================================
+# interlayer :: mutual-connection observations  (Tier 2 — ground truth)
+# =============================================================================
+# Copy this file to  data/observations.yaml  and fill it in while you browse.
+# (data/ is git-ignored, so the names you type never reach version control.)
+#
+#   cp docs/observations-template.yaml data/observations.yaml
+#
+# Then:  uv run interlayer enrich
+#
+# Everything below the "targets:" line is EXAMPLE DATA. Delete it.
+# The workflow that produces this file is docs/collecting-observations.md.
+# Read that first; it takes three minutes and saves you an hour.
+#
+# -----------------------------------------------------------------------------
+# THE ONLY TWO RULES
+# -----------------------------------------------------------------------------
+# 1. Type the "N mutual connections" number LinkedIn showed you, even when you
+#    do not record every name. That number is how the tool knows your reading
+#    was partial. Without it, every observation is treated as INCOMPLETE.
+# 2. When a name is ambiguous ("James Smith", and you have three), paste the
+#    profile URL instead of the name. The tool never guesses between two people
+#    — it reports them and moves on, and you have to come back and fix it.
+# =============================================================================
+
+# --- Session defaults. Both optional; both save you typing on every target. ---
+
+firm: jane_street       # jane_street | citadel_llc | citadel_securities
+                        # Applies to every target below that doesn't say
+                        # otherwise. NOTE: "citadel" on its own is REJECTED —
+                        # Citadel LLC (the fund) and Citadel Securities (the
+                        # market maker) are different companies.
+
+observed_on: 2026-08-21 # The day you read these lists. Mutual lists go stale;
+                        # this is how the report knows how old the evidence is.
+
+targets:
+
+  # ---------------------------------------------------------------------------
+  # A complete reading. Stated count 4, four names recorded → complete.
+  # ---------------------------------------------------------------------------
+  - name: Priya Raman
+    url: https://www.linkedin.com/in/priya-raman-4821
+    title: Quantitative Trader
+    mutuals_stated: 4          # the number on the "4 mutual connections" link
+    mutuals: |                 # one per line. No quotes, no commas, no dashes.
+      Sarah Chen
+      Rajiv Patel
+      Marcus Webb
+      Ana Beatriz Souza
+
+  # ---------------------------------------------------------------------------
+  # A truncated reading. LinkedIn said 31; you recorded the first page.
+  # `truncated: yes` is optional here — the tool works it out from 6 < 31 — but
+  # write it when you stopped early on purpose, so the reason is on the record.
+  # ---------------------------------------------------------------------------
+  - name: Daniel Osei
+    url: https://www.linkedin.com/in/daniel-osei-quant
+    title: Head of Systematic Execution
+    mutuals_stated: 31
+    truncated: yes
+    note: first page only, stopped after 6
+    mutuals: |
+      Sarah Chen
+      Tom Nakamura
+      https://www.linkedin.com/in/j-smith-8827   # two James Smiths → URL
+      Ana Beatriz Souza
+      Marcus Webb
+      Lena Fischer
+
+  # ---------------------------------------------------------------------------
+  # A different firm in the same session: override the file-level default.
+  # A target with zero mutuals is still worth recording — it is evidence.
+  # ---------------------------------------------------------------------------
+  - name: Elena Vasquez
+    firm: citadel_securities
+    url: https://www.linkedin.com/in/elena-vasquez-cs
+    title: Senior Software Engineer, Low Latency
+    mutuals_stated: 0
+    mutuals: |
+
+# =============================================================================
+# FIELD REFERENCE
+# =============================================================================
+# Per target — only `name` and `firm` are required, and `firm` can come from the
+# file-level default above.
+#
+#   name             Their name as LinkedIn shows it.            REQUIRED
+#   firm             jane_street | citadel_llc | citadel_securities
+#   url              Their profile URL. Paste it — it is the strongest key the
+#                    tool has for this person, and it makes the record stable
+#                    even if they change their display name.
+#   title            Their headline/title. Free text; used for the report and
+#                    for a coarse seniority guess.
+#   mutuals_stated   The number in "N mutual connections". See rule 1.
+#   mutuals          One name-or-URL per line, under a `|`.
+#   truncated        yes  → you did not see the whole list.
+#   complete         yes  → you did see the whole list. Cannot override the
+#                    arithmetic: if fewer names resolve than `mutuals_stated`,
+#                    the record is marked incomplete anyway and you are told.
+#   observed_on      YYYY-MM-DD. Overrides the file-level default.
+#   seniority        intern|junior|mid|senior|lead|executive|founder|unknown.
+#                    Optional; otherwise guessed from `title`.
+#   note             Anything you want to remember. Free text.
+#
+# Aliases are accepted for every key (url/link/profile/linkedin_url all work).
+# An UNRECOGNISED key is a hard error, on purpose: a typo'd `mutual:` would
+# otherwise silently throw away the only data you came here to collect.
+#
+# =============================================================================
+# WHAT HAPPENS TO WHAT YOU TYPE
+# =============================================================================
+# Names are matched against the connections in your own Connections.csv export.
+# Exact profile URL wins; then exact name; then fuzzy name matching (rapidfuzz
+# WRatio, accept at 90). Anything ambiguous or unmatched is written to
+# artifacts/unresolved_mutuals.jsonl with the near misses — never guessed,
+# never silently dropped. Fix those by pasting URLs and run `enrich` again.
+#
+# A target whose reading is incomplete is flagged `complete: false`, and absence
+# from that list is then never treated as evidence of absence anywhere
+# downstream. That is why rule 1 matters.
+# =============================================================================
