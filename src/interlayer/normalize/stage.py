@@ -128,6 +128,7 @@ class _Claim:
     title: str | None
     start: ApproxDate | None
     end: ApproxDate | None
+    is_current: bool
     weight: float
 
 
@@ -339,7 +340,7 @@ def _date_key(value: ApproxDate | None) -> int:
 def run(cfg: Settings) -> None:
     """Resolve employers and schools, then write orgs, affiliations and reviews."""
     people = read_jsonl(cfg.people_path, Person, produced_by="ingest")
-    gaz = load_gazetteer(cfg.gazetteer)
+    gaz = load_gazetteer(cfg.gazetteer_path)
 
     drafts: dict[str, _OrgDraft] = {}
     claims: list[_Claim] = []
@@ -383,7 +384,7 @@ def run(cfg: Settings) -> None:
                 else None
             )
             weight = _confidence(result, entity) * (role_weight(role) if role else 1.0)
-            start, end = spans[index]
+            start, end, current_role = spans[index]
             claims.append(
                 _Claim(
                     person_id=person.person_id,
@@ -392,6 +393,7 @@ def run(cfg: Settings) -> None:
                     title=title.strip() or None,
                     start=start,
                     end=end,
+                    is_current=current_role and end is None,
                     weight=round(weight, 6),
                 )
             )
@@ -457,15 +459,27 @@ def _needs_review(result: MatchResult, cfg: Settings) -> bool:
     return result.reason.startswith("guard_reject") and result.score >= cfg.match_review
 
 
-def _spans(person: Person) -> list[tuple[ApproxDate | None, ApproxDate | None]]:
-    """Date spans in the same order ``_resolve_person_strings`` produced strings."""
-    spans: list[tuple[ApproxDate | None, ApproxDate | None]] = []
+def _spans(person: Person) -> list[tuple[ApproxDate | None, ApproxDate | None, bool]]:
+    """Date span and currency, in the order ``_resolve_person_strings`` produced strings.
+
+    Currency travels with the dates because it is part of the same fact. A
+    connections export carries only each person's *present* employer, so ingest
+    marks every position current; dropping the flag here left every affiliation
+    in a real run looking like a job somebody used to have. That understated
+    co-tenure between people who are colleagues right now, scored them as former
+    employees rather than current ones, and told the operator "worked at" about
+    someone their own export says works there today.
+    """
+    spans: list[tuple[ApproxDate | None, ApproxDate | None, bool]] = []
     for position in person.positions:
         if position.company_raw.strip():
-            spans.append((position.start, position.end))
+            spans.append((position.start, position.end, position.is_current))
     for education in person.educations:
+        # The same emptiness filter _resolve_person_strings applies, or the
+        # indices stop lining up with the strings these spans describe.
         if education.school_raw.strip():
-            spans.append((education.start, education.end))
+            # A degree is not a job; nobody is "currently" an alumnus.
+            spans.append((education.start, education.end, False))
     return spans
 
 
@@ -497,6 +511,7 @@ def _build_affiliations(claims: list[_Claim], group_to_id: dict[str, str]) -> li
             title=claim.title,
             start=claim.start,
             end=claim.end,
+            is_current=claim.is_current,
             weight=claim.weight,
         )
     return [

@@ -307,7 +307,7 @@ def _write_manifest(
             "report.emails": cfg.email_mode,
             "report.include_speculative": str(cfg.include_speculative).lower(),
             "gazetteer_sha256": (
-                sha256_file(cfg.gazetteer) if cfg.gazetteer.is_file() else "missing"
+                sha256_file(cfg.gazetteer_path) if cfg.gazetteer_path.is_file() else "missing"
             ),
         },
         counts={**{k: int(v) for k, v in sorted(counts.items())}, "report_bytes": report_bytes},

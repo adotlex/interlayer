@@ -51,6 +51,9 @@ class Settings(BaseModel):
     input_csv: Path | None = None
     artifact_dir: Path = Path("artifacts")
     gazetteer: Path = Path("data/gazetteer/firms.yaml")
+    """Curated firm list. Resolved against the installed package when the
+    relative default does not exist, so the tool works from any directory rather
+    than only from a checkout's root."""
 
     observations_input: Path | None = None
     """Hand-collected Tier 2 observations. Deliberately NOT under artifact_dir,
@@ -132,6 +135,22 @@ class Settings(BaseModel):
         return self
 
     # --- artifact paths ----------------------------------------------------
+    @property
+    def gazetteer_path(self) -> Path:
+        """The gazetteer to actually load.
+
+        The default is relative, which silently made every invocation outside a
+        checkout fail in ``normalize``. An explicit path is honoured as given; a
+        relative default that does not exist falls back to the copy shipped
+        beside the package.
+        """
+        if self.gazetteer.is_file():
+            return self.gazetteer
+        if self.gazetteer.is_absolute():
+            return self.gazetteer
+        bundled = Path(__file__).resolve().parent.parent.parent / self.gazetteer
+        return bundled if bundled.is_file() else self.gazetteer
+
     @property
     def email_mode(self) -> str:
         """How e-mail addresses are handled, in one word, for display and audit.
