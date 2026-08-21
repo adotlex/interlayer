@@ -19,6 +19,7 @@ import { createLayer } from '../../src/layer.ts';
 import { defineProvider } from '../../src/registry/index.ts';
 import { createFakeRuntime, type FakeRuntime } from '../support/index.ts';
 import {
+  drainMicrotasks,
   expectNoLeakedTimers,
   NO_POLICIES,
   neverSettles,

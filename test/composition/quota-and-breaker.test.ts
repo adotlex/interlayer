@@ -27,8 +27,10 @@ import { createLayer } from '../../src/layer.ts';
 import { defineProvider } from '../../src/registry/index.ts';
 import { createFakeRuntime, fakeProvider, testContext } from '../support/index.ts';
 import {
+  atVirtual,
   breakerView,
   buildComposition,
+  drainMicrotasks,
   echoContract,
   rejectionOf,
   scripted,
@@ -360,6 +362,143 @@ describe('RateLimit outside CircuitBreaker', () => {
     expect(second.code).toBe('CIRCUIT_OPEN');
     expect(provider.callCount, 'the provider was never reached the second time').toBe(1);
     expect(tokensOf(limiter), 'but a token was still spent getting there').toBe(8);
+    await composition.dispose();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 5. HALF-OPEN meets the retry loop
+ * ------------------------------------------------------------------ */
+
+describe('half-open admission inside a retry loop', () => {
+  it('spends exactly ONE probe per call, then refuses the rest of the loop', async () => {
+    // The composition question no unit could ask: the breaker allows one trial
+    // call at a time, and the thing calling it is a loop that wants three. The
+    // loop must not be able to burn the whole cooldown's worth of probes.
+    const runtime = createFakeRuntime();
+    const provider = scripted({ id: 'p', failures: 2 });
+    const layer = createLayer({
+      contract: echoContract,
+      providers: [
+        defineProvider(echoContract, { id: 'p', capabilities: { echo: provider.handler } }),
+      ],
+      resilience: {
+        retry: { maxAttempts: 3, strategy: 'fixed', baseDelayMs: 10 },
+        rateLimit: false,
+        breaker: {
+          mode: 'consecutive',
+          consecutiveFailureThreshold: 1,
+          resetMs: 1_000,
+          halfOpenMaxConcurrent: 1,
+          halfOpenSuccessesToClose: 1,
+        },
+        timeout: { attemptTimeoutMs: 1_000, totalTimeoutMs: 60_000 },
+      },
+      runtime,
+    });
+    const transitions: InterlayerEvents['breaker:transition'][] = [];
+    layer.on('breaker:transition', (e) => transitions.push(e));
+
+    // Call A trips the breaker on attempt 1; attempt 2 is refused, attempt 3
+    // never happens (CIRCUIT_OPEN is non-retryable).
+    await rejectionOf(runtime, layer.call('echo', { n: 1 }));
+    expect(provider.callCount).toBe(1);
+    expect(runtime.now()).toBe(10);
+
+    // Call B, after the cooldown: attempt 1 IS the probe, it fails, the breaker
+    // re-opens with a fresh cooldown and attempt 2 is refused again.
+    await runtime.advance(990);
+    await rejectionOf(runtime, layer.call('echo', { n: 2 }));
+    expect(provider.callCount, 'one probe, not three').toBe(2);
+
+    // Call C, after the second cooldown: the probe succeeds and closes it.
+    await runtime.advance(990);
+    const reply = await settle(runtime, layer.call('echo', { n: 3 }));
+
+    expect(reply).toEqual({ n: 3, by: 'p' });
+    expect(provider.at, 'one physical call per cooldown window').toEqual([0, 1_000, 2_000]);
+    expect(transitions.map((t) => [t.from, t.to])).toEqual([
+      ['closed', 'open'],
+      ['open', 'half-open'],
+      ['half-open', 'open'],
+      ['open', 'half-open'],
+      ['half-open', 'closed'],
+    ]);
+    expect(runtime.pendingTimers).toBe(0);
+    await layer.close();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 6. An observation, not a rule: what the breaker makes of a CALL-scope
+ *    deadline breach that happened to land inside an attempt.
+ * ------------------------------------------------------------------ */
+
+describe('what a total-timeout breach does to the breaker', () => {
+  it('is scored as a provider FAILURE, unlike a caller cancellation', async () => {
+    // `isUnscored()` discards `CancelledError` — a caller withdrawal says
+    // nothing about provider health — but deliberately keeps `TimeoutError`,
+    // whose doc comment justifies that for the ATTEMPT timeout ("our own
+    // attempt timeout firing IS evidence about the provider").
+    //
+    // Because the total timeout aborts the signal the attempt timeout inherits,
+    // a CALL-scope breach reaches the breaker as a `TimeoutError` too, and is
+    // scored the same way. Pinning the behaviour here: a caller with a budget
+    // shorter than the provider's latency will trip the breaker for everyone
+    // else. Flagged to the orchestrator as a design question, not asserted as a
+    // defect — R4 §3.7 does not decide it either way.
+    const provider = fakeProvider('p').alwaysSucceed('ok', 1_000);
+    const handle = testContext({ provider });
+    const composition = buildComposition({
+      retry: false,
+      rateLimit: false,
+      breaker: { mode: 'consecutive', consecutiveFailureThreshold: 1, resetMs: 60_000 },
+      timeout: { attemptTimeoutMs: 10_000, totalTimeoutMs: 50 },
+    });
+    const breaker = composition.breaker;
+    if (breaker === undefined) throw new Error('breaker was not built');
+
+    const error = await rejectionOf(
+      handle.runtime,
+      composition.run(handle.call, handle.provider, provider.handler()),
+    );
+    expect(error.code).toBe('TIMEOUT');
+    if (hasCode(error, 'TIMEOUT')) expect(error.scope).toBe('call');
+
+    // The breaker records on the unwind, which happens after the caller's
+    // rejection has already been delivered.
+    await drainMicrotasks();
+    expect(breakerView(breaker, 'p')?.state, 'the provider is now shut out').toBe('open');
+    await composition.dispose();
+  });
+
+  it('a caller cancellation at the same instant is NOT scored', async () => {
+    const provider = fakeProvider('p').alwaysSucceed('ok', 1_000);
+    const handle = testContext({ provider });
+    const composition = buildComposition({
+      retry: false,
+      rateLimit: false,
+      breaker: { mode: 'consecutive', consecutiveFailureThreshold: 1, resetMs: 60_000 },
+      timeout: false,
+    });
+    const breaker = composition.breaker;
+    if (breaker === undefined) throw new Error('breaker was not built');
+
+    atVirtual(handle.runtime, 50, () => {
+      handle.abort();
+    });
+    const error = await rejectionOf(
+      handle.runtime,
+      composition.run(handle.call, handle.provider, provider.handler()),
+    );
+
+    expect(error.code).toBe('CANCELLED');
+    await drainMicrotasks();
+    expect(
+      breakerView(breaker, 'p')?.state,
+      'the caller hung up; that is not evidence about the provider',
+    ).toBe('closed');
+    expect(breakerView(breaker, 'p')?.consecutiveFailures).toBe(0);
     await composition.dispose();
   });
 });
