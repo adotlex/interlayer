@@ -222,46 +222,46 @@ describe('non-Error objects', () => {
    * ── FAILING ON PURPOSE — DEFECT #3, `toInterlayerError` is not total ─────
    *
    * The funnel is documented as "every non-Interlayer throw becomes a typed
-   * error, cause preserved". It computes `String(e)` for anything that is not
+   * error, cause preserved". It reaches for `String(e)` on anything that is not
    * an `Error`, and `String()` THROWS on an object with no prototype:
-   * `TypeError: Cannot convert object to primitive value`.
+   * `TypeError: Cannot convert object to primitive value`. `Object.create(null)`
+   * is the standard shape for a safe dictionary, so this is reachable from
+   * ordinary code.
    *
-   * The funnel therefore throws from inside `runFallbackChain`'s own catch
-   * block, which:
-   *   - destroys the fallback chain (a healthy alternate is never tried),
-   *   - never records the failure on `ctx.failures`,
-   *   - and hands the caller a `PROVIDER_ERROR` describing the NORMALISER's
-   *     failure — "Cannot convert object to primitive value" — instead of the
-   *     provider's.
+   * The blast radius is smaller than it looks — `runHandler`'s rejection
+   * handler is already inside a promise, so the `TypeError` becomes a rejection
+   * and the chain still falls back — but the funnel's own contract is broken in
+   * two visible ways:
    *
-   * A null-prototype object is not exotic: `Object.create(null)` is the
-   * standard shape for a safe dictionary, and anything built that way can end
-   * up thrown. The fix is a guarded stringify; the normalisation funnel of an
-   * error taxonomy has to be total.
+   *   - the surfaced failure describes the NORMALISER ("Cannot convert object
+   *     to primitive value"), pointing an operator at a `TypeError` inside the
+   *     library instead of at the provider that failed;
+   *   - `cause` holds that `TypeError`, so the value the provider actually
+   *     threw is gone. Nothing else in the pipeline kept a reference to it.
+   *
+   * The `attempt:failure` event is lost with it: `toInterlayerError` throws on
+   * the line ABOVE the `events.emit`, so this attempt emits `attempt:start`
+   * and nothing else. A guarded stringify fixes all three at once — the
+   * normalisation funnel of an error taxonomy has to be total.
    *
    * NOT FIXED HERE: `src/**` is read-only to this wave.
    */
-  it('[KNOWN BUG] a null-prototype throw breaks the normalisation funnel itself', async () => {
+  it('[KNOWN BUG] a null-prototype throw loses the original value and its attempt event', async () => {
     const runtime = createFakeRuntime();
-    let backupCalls = 0;
+    const bag: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    bag['reason'] = 'upstream refused';
+
     const weird = defineProvider(probe, {
       id: 'weird',
       capabilities: {
         run: async (): Promise<Say> => {
-          const bag: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-          bag['reason'] = 'upstream refused';
           throw bag;
         },
       },
     });
     const backup = defineProvider(probe, {
       id: 'backup',
-      capabilities: {
-        run: async (): Promise<Say> => {
-          backupCalls++;
-          return { a: 'ok', by: 'backup' };
-        },
-      },
+      capabilities: { run: async (): Promise<Say> => ({ a: 'ok', by: 'backup' }) },
     });
     const layer = createLayer({
       contract: probe,
@@ -269,12 +269,22 @@ describe('non-Error objects', () => {
       runtime,
       resilience: NO_POLICIES,
     });
+    const attemptFailures: InterlayerEvents['attempt:failure'][] = [];
+    layer.on('attempt:failure', (payload) => {
+      attemptFailures.push(payload);
+    });
 
-    // FAILS: the funnel throws a TypeError, the chain dies, `backupCalls === 0`.
-    const reply = await settle(runtime, layer.call('run', { q: 'x' }));
+    const meta = await settle(runtime, layer.callWithMeta('run', { q: 'x' }));
 
-    expect(reply.by).toBe('backup');
-    expect(backupCalls).toBe(1);
+    // The chain does survive: the normaliser's TypeError is itself normalised
+    // one level up and reads as an ordinary PROVIDER_ERROR.
+    expect(meta.providerId).toBe('backup');
+    expect(meta.errors).toHaveLength(1);
+
+    // FAILS: `cause` is the normaliser's TypeError, not the thrown value.
+    expect(meta.errors[0]?.cause).toBe(bag);
+    // FAILS: no `attempt:failure` was emitted for the attempt that failed.
+    expect(attemptFailures).toHaveLength(1);
     await layer.close();
   });
 });
@@ -283,58 +293,103 @@ describe('non-Error objects', () => {
  * 3. Synchronous throw vs rejected promise
  * ------------------------------------------------------------------ */
 
+/** What a caller and an observer see for one failing call. */
+interface Observed {
+  readonly code: string;
+  readonly message: string;
+  readonly providerId: string | undefined;
+  readonly causeIsRoot: boolean;
+  readonly attemptStarts: number;
+  readonly attemptFailures: number;
+}
+
+async function observe(handler: () => Promise<Say>, root: unknown): Promise<Observed> {
+  const runtime = createFakeRuntime();
+  const provider = defineProvider(probe, { id: 'p', capabilities: { run: handler } });
+  const layer = createLayer({
+    contract: probe,
+    providers: [provider],
+    runtime,
+    resilience: NO_POLICIES,
+  });
+  const starts: InterlayerEvents['attempt:start'][] = [];
+  const failures: InterlayerEvents['attempt:failure'][] = [];
+  layer.on('attempt:start', (payload) => {
+    starts.push(payload);
+  });
+  layer.on('attempt:failure', (payload) => {
+    failures.push(payload);
+  });
+
+  const error = await rejectionOf(runtime, layer.call('run', { q: 'x' }));
+  await layer.close();
+  return {
+    code: error.code,
+    message: error.message,
+    providerId: error.providerId,
+    causeIsRoot: error.cause === root,
+    attemptStarts: starts.length,
+    attemptFailures: failures.length,
+  };
+}
+
 describe('a synchronous throw and a rejected promise are indistinguishable', () => {
-  it('both surface the same code, message, cause and events', async () => {
-    const runtime = createFakeRuntime();
+  it('both surface the same code, message, provider and cause', async () => {
     const rootSync = new Error('same failure');
     const rootAsync = new Error('same failure');
 
-    const syncProvider = defineProvider(probe, {
-      id: 'p',
-      capabilities: { run: throwsSynchronously(rootSync) },
-    });
-    const asyncProvider = defineProvider(probe, {
-      id: 'p',
-      capabilities: { run: rejects(rootAsync) },
-    });
-
-    const collect = async (
-      provider: typeof syncProvider | typeof asyncProvider,
-      root: Error,
-    ): Promise<Record<string, unknown>> => {
-      const rt = createFakeRuntime();
-      const layer = createLayer({
-        contract: probe,
-        providers: [provider],
-        runtime: rt,
-        resilience: NO_POLICIES,
-      });
-      const failures: InterlayerEvents['attempt:failure'][] = [];
-      layer.on('attempt:failure', (payload) => {
-        failures.push(payload);
-      });
-      const error = await rejectionOf(rt, layer.call('run', { q: 'x' }));
-      await layer.close();
-      return {
-        code: error.code,
-        message: error.message,
-        providerId: error.providerId,
-        causeIsRoot: error.cause === root,
-        attemptFailures: failures.length,
-        attempt: failures[0]?.attempt,
-      };
-    };
-
-    const fromSync = await collect(syncProvider, rootSync);
-    const fromAsync = await collect(asyncProvider, rootAsync);
+    const fromSync = await observe(throwsSynchronously(rootSync), rootSync);
+    const fromAsync = await observe(rejects(rootAsync), rootAsync);
 
     // A handler that throws before it ever returns a promise must not be a
-    // different kind of failure from one that rejects.
-    expect(fromSync).toEqual(fromAsync);
-    expect(fromSync['code']).toBe('PROVIDER_ERROR');
-    expect(fromSync['causeIsRoot']).toBe(true);
-    expect(fromSync['attemptFailures']).toBe(1);
-    expect(runtime.now()).toBe(0);
+    // different KIND of failure from one that rejects.
+    expect(fromSync.code).toBe(fromAsync.code);
+    expect(fromSync.message).toBe(fromAsync.message);
+    expect(fromSync.providerId).toBe(fromAsync.providerId);
+    expect(fromSync.causeIsRoot).toBe(true);
+    expect(fromAsync.causeIsRoot).toBe(true);
+    expect(fromSync.code).toBe('PROVIDER_ERROR');
+  });
+
+  /**
+   * ── FAILING ON PURPOSE — DEFECT #4, `runHandler` in `src/layer.ts` ───────
+   *
+   * `runHandler` emits `attempt:start`, then calls the handler and attaches its
+   * outcome events with `.then(onSuccess, onFailure)`. A handler that throws
+   * SYNCHRONOUSLY never gets as far as `.then`, so the attempt emits
+   * `attempt:start` and then nothing at all: no `attempt:success`, no
+   * `attempt:failure`, no `durationMs`, no `willRetry`.
+   *
+   * The call itself is fine — `compose()` turns the synchronous throw into a
+   * rejection at the terminal and the fallback chain behaves normally — so this
+   * is invisible except through the event stream, which is exactly where it
+   * does damage: every latency histogram, error-rate metric and trace span
+   * built on the start/finish pair silently loses these attempts, and an
+   * `attempt:start` with no partner leaks a span that never closes.
+   *
+   * A synchronous throw is not an exotic handler shape. Any non-`async`
+   * function that validates before it dispatches — `if (!apiKey) throw …` —
+   * does this, and the rest of the library already anticipates it: `compose()`
+   * wraps its terminal in `try/catch` for this reason, and `runWithTimeout`
+   * wraps `next()` in `Promise.resolve().then(…)` with a comment saying so.
+   * `runHandler` is the one place that does not.
+   *
+   * NOT FIXED HERE: `src/**` is read-only to this wave.
+   */
+  it('[KNOWN BUG] a synchronous throw emits attempt:start with no matching outcome event', async () => {
+    const rootSync = new Error('same failure');
+    const rootAsync = new Error('same failure');
+
+    const fromSync = await observe(throwsSynchronously(rootSync), rootSync);
+    const fromAsync = await observe(rejects(rootAsync), rootAsync);
+
+    expect(fromAsync.attemptStarts).toBe(1);
+    expect(fromAsync.attemptFailures).toBe(1);
+
+    expect(fromSync.attemptStarts).toBe(1);
+    // FAILS: 0. The attempt started and never finished, as far as any observer
+    // can tell.
+    expect(fromSync.attemptFailures).toBe(1);
   });
 
   it('a synchronous NON-Error throw is normalised the same way too', async () => {
@@ -473,12 +528,14 @@ describe('a provider that never settles', () => {
         settled = true;
       },
     );
+    call.catch(() => undefined);
 
-    // `settle` gives up when no timer is left to move — which is exactly the
-    // point: nothing is watching, so nothing will ever end this call. That is
-    // the documented consequence of switching every policy off, and the reason
-    // `timeout: false` is a decision rather than a default.
-    await settle(runtime, call);
+    // Deliberately NOT awaited: there is nothing to await. No policy is
+    // watching and no timer exists to fire, so this call never ends. That is
+    // the documented consequence of switching every policy off — the orphaned
+    // work is the operation's problem — and it is why `timeout: false` is a
+    // decision rather than a default.
+    for (let i = 0; i < 5; i++) await drainMicrotasks();
     expect(settled).toBe(false);
     expect(runtime.pendingTimers).toBe(0);
     await layer.close();

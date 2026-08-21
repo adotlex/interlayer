@@ -257,18 +257,23 @@ function asRecord(value: unknown): Readonly<Record<string, unknown>> | undefined
  * the dot form. Reading through a parameter rather than a string literal keeps
  * that legal without tripping `useLiteralKeys` at every call site.
  */
+function pick(record: Readonly<Record<string, unknown>> | undefined, key: string): unknown {
+  return record?.[key];
+}
+
 function num(record: Readonly<Record<string, unknown>> | undefined, key: string): number {
-  const value = record?.[key];
+  const value = pick(record, key);
   return typeof value === 'number' ? value : Number.NaN;
 }
 
 function str(record: Readonly<Record<string, unknown>> | undefined, key: string): string {
-  const value = record?.[key];
+  const value = pick(record, key);
   return typeof value === 'string' ? value : '<missing>';
 }
 
-const KEYS = 'keys';
-const TIMER_ARMED = 'timerArmed';
+function bool(record: Readonly<Record<string, unknown>> | undefined, key: string): boolean {
+  return pick(record, key) === true;
+}
 
 /** One key's slice of `circuitBreaker().describe()`. */
 export interface BreakerView {
@@ -293,7 +298,7 @@ export function breakerView(
   key: string,
 ): BreakerView | undefined {
   if (describe === undefined) return undefined;
-  const keys = asRecord(describe()?.[KEYS]);
+  const keys = asRecord(pick(describe(), 'keys'));
   const entry = keys === undefined ? undefined : asRecord(keys[key]);
   if (entry === undefined) return undefined;
   return {
@@ -321,6 +326,6 @@ export function limiterView(
   return {
     tokens: num(d, 'tokens'),
     queueDepth: num(d, 'queueDepth'),
-    timerArmed: d?.[TIMER_ARMED] === true,
+    timerArmed: bool(d, 'timerArmed'),
   };
 }
